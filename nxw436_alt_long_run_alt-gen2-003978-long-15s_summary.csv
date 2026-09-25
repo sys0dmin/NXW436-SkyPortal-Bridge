@@ -1,2 +1,0 @@
-abort_reason,direction,duration_requested_s,payload_hex,preflight_alt,preflight_az,run_label,run_status,start_raw,steady_state
-implausible ALT position jump: 4212,+,15.0,003978,41293,89,alt-gen2-003978-long-15s,aborted,41293,not_reached

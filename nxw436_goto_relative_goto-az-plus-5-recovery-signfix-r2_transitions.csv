@@ -1,6 +1,0 @@
-elapsed_s,no_progress_detected,payload_hex,raw_position,reason,recovery_attempted,recovery_count,recovery_failure_reason,recovery_payload,recovery_progress_counts,recovery_start_position,recovery_success,remaining_counts,state,unwrapped_position
-0.00012340000830590725,False,00E5E3,232601,initial-distance,False,0,,,,,,14713,FAST,232601
-3.6942628000106197,False,0072F1,242913,remaining-distance-threshold,False,0,,,,,,4401,MEDIUM,242913
-5.981175799999619,False,003978,244815,remaining-distance-threshold,False,0,,,,,,2499,FINE,244815
-11.434382400009781,False,002000,246346,remaining-distance-threshold,False,0,,,,,,968,SLOW,246346
-17.063377600017702,False,,247052,conservative-stop-margin,False,0,,,,,,262,STOP,247052

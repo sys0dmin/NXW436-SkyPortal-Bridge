@@ -1,4 +1,0 @@
-cycle,direction,fast_progress_counts,final_outcome,final_raw,implausible_jump_count,invalid_reply_count,kick_attempted,kick_produced_progress,medium_after_kick_recovered,medium_progress_counts,no_progress,operator_observation,resend_attempted,resend_recovered,start_raw,timeout_count
-1,+,4982,normal-medium-complete,19837,0,0,False,False,False,12180,False,,False,False,2675,0
-2,+,4737,normal-medium-complete,36376,1,2,False,False,False,11516,False,,False,False,20123,0
-3,+,4966,normal-medium-complete,54089,1,2,False,False,False,12009,False,,False,False,37114,0

@@ -1,2 +1,0 @@
-abort_reason,axis,preflight_alt_raw,preflight_alt_rx_bytes_hex,preflight_az_raw,preflight_az_rx_bytes_hex,requested_degrees,run_status,target_delta_counts
-ControllerAbort: unexpected opposite-direction encoder movement,alt,1058854,102826,1058958,10288E,5,aborted,14713

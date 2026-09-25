@@ -1,2 +1,0 @@
-direction,fast_seconds,final_raw,final_unwrapped,invalid_samples_total,label,medium_seconds,min_progress_counts,mode,no_progress_detected,observation,preflight_alt_raw,preflight_alt_rx,preflight_az_raw,preflight_az_rx,progress_window_s,run_status,total_elapsed_s
-+,2.0,71651,71651,0,az-plus-resend-hunt-01,8.0,20,resend-medium,False,,1053037,10116D,54400,00D480,1.5,completed,10.525849199999357

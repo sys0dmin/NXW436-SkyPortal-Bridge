@@ -1,9 +1,0 @@
-cycle_index,direction,end_raw,fast_progress,final_outcome,implausible_jump_count,invalid_samples_total,medium_progress,no_progress_detected,operator_observation,resend_attempted,resend_recovered,run_status,start_raw,timeout_count
-1,+,125939,5404,normal-medium-complete,0,0,13786,False,,False,False,completed,106749,0
-2,+,145844,5480,normal-medium-complete,0,0,14109,False,,False,False,completed,126255,0
-3,+,164309,5272,normal-medium-complete,1,1,12926,False,,False,False,completed,146111,0
-4,+,184098,5063,normal-medium-complete,0,1,13956,False,,False,False,completed,165079,0
-5,+,201842,5211,normal-medium-complete,1,1,12264,False,,False,False,completed,184367,0
-6,+,207479,5076,normal-medium-complete,1,3,300,False,,False,False,completed,202103,0
-7,+,225436,5158,normal-medium-complete,0,0,12799,False,,False,False,completed,207479,0
-8,+,243173,5110,normal-medium-complete,0,0,12312,False,,False,False,completed,225751,0

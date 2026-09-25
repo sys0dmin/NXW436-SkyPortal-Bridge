@@ -1,5 +1,0 @@
-monotonic_s,event,direction,payload_hex,note
-41142.2700881,MOVE,+,0072F1,
-41262.3217765,STOP_STOP,+,000000,normal-leg-end
-41264.321823,MOVE,-,0072F1,
-41384.3732555,STOP_STOP,-,000000,normal-leg-end

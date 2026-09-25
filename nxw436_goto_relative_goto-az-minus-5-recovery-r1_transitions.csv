@@ -1,9 +1,0 @@
-elapsed_s,no_progress_detected,payload_hex,raw_position,reason,recovery_attempted,recovery_count,recovery_failure_reason,recovery_payload,recovery_progress_counts,recovery_start_position,recovery_success,remaining_counts,state,unwrapped_position
-0.00013259999104775488,False,00E5E3,246709,initial-distance,False,0,,,,,,-14713,FAST,246709
-4.0460334999952465,False,0072F1,236678,remaining-distance-threshold,False,0,,,,,,-4682,MEDIUM,236678
-5.805025499983458,True,0072F1,235647,valid progress -620 counts over 1.583s,False,0,,,,,,-3651,AZ_MEDIUM_NO_PROGRESS,235647
-5.805116899980931,True,0072F1,235647,single-same-payload-resend,True,1,,0072F1,0,235647,,-3651,AZ_MEDIUM_RESEND,235647
-5.9809442999830935,True,0072F1,235567,valid-commanded-direction-progress,True,1,,0072F1,80,235647,True,-3571,AZ_MEDIUM_RECOVERY_SUCCESS,235567
-7.388338799995836,True,003978,234493,remaining-distance-threshold,True,1,,0072F1,1154,235647,True,-2497,FINE,234493
-13.193371800007299,True,002000,232863,remaining-distance-threshold,True,1,,0072F1,2784,235647,True,-867,SLOW,232863
-18.998349000001326,True,,232264,conservative-stop-margin,True,1,,0072F1,3383,235647,True,-268,STOP,232264

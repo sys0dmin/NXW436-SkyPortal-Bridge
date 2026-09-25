@@ -1,6 +1,0 @@
-cycle_index,direction,end_raw,fast_progress,final_outcome,implausible_jump_count,invalid_samples_total,medium_progress,no_progress_detected,operator_observation,resend_attempted,resend_recovered,run_status,start_raw,timeout_count
-1,+,171821,4817,normal-medium-complete,0,0,13141,False,,False,False,completed,153863,0
-2,+,189734,5096,normal-medium-complete,0,0,12525,False,,False,False,completed,172113,0
-3,+,207832,4939,normal-medium-complete,0,0,12846,False,,False,False,completed,190047,0
-4,+,226248,4837,normal-medium-complete,0,0,13304,False,,False,False,completed,208107,0
-5,+,232618,5100,recovered-by-medium-resend,0,0,300,True,,True,True,completed,226542,0

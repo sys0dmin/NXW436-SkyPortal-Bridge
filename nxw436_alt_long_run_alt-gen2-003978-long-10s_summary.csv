@@ -1,2 +1,0 @@
-after_stop_raw,breakaway_latency_s,direction,duration_requested_s,last_before_stop_raw,payload_hex,post_stop_coast_counts,post_stop_coast_degrees,preflight_alt,preflight_az,prior_slope_cps,reason,run_label,run_status,start_raw,starts_from_rest,steady_state,tail_local_slope_cv,tail_slope_cps,tail_vs_prior_fraction
-39449,1.7332095000019763,+,10.0,38893,003978,556,0.1889499758337361,29690,89,1049.4732127765346,slope still changing or noisy,alt-gen2-003978-long-10s,completed,29690,yes,not_reached,0.13283097159520407,1864.4395962730312,0.43711063910335

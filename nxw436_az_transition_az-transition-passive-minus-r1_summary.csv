@@ -1,2 +1,0 @@
-direction,fast_seconds,final_raw,final_unwrapped,invalid_samples_total,label,medium_seconds,min_progress_counts,mode,no_progress_detected,observation,preflight_alt_raw,preflight_alt_rx,preflight_az_raw,preflight_az_rx,progress_window_s,run_status,total_elapsed_s
--,2.0,2536,2536,1,az-transition-passive-minus-r1,8.0,20,passive,False,,1053037,10116D,17221,004345,1.5,completed,10.527637099992717

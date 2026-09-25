@@ -1,4 +1,0 @@
-sequence,payload_hex,direction,duration_s,start_raw,end_raw,delta_counts,samples,measurable_start_from_rest
-1,0000F5,+,3.0,1,13,12,17,True
-2,003978,+,3.0,269,166,-103,17,True
-3,0072F1,+,3.0,171,1031,860,17,True
