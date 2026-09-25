@@ -106,6 +106,25 @@ class AuxFrontendTests(unittest.TestCase):
         self.assertIsNone(dispatcher.dispatch(AUXFrame(0x20, 0xBD, MC_GET_VER)).reply)
         self.assertIsNone(dispatcher.dispatch(AUXFrame(0x20, 0xB9, MC_GET_VER)).reply)
 
+    def test_hypothetical_zero_payload_ack_is_exact_and_has_no_backend_calls(self) -> None:
+        profile = SyntheticAUXProfile(
+            frozenset({(0x20, 0x10, MC_MOVE_POS, 1)}),
+            hypothetical_zero_payload_ack_requests=frozenset({(0x20, 0x10, MC_MOVE_POS, b"\x00")}),
+        )
+        dispatcher = AUXDispatcher(MountController(self.fake), synthetic_profile=profile)
+        result = dispatcher.dispatch(AUXFrame(0x20, 0x10, MC_MOVE_POS, b"\x00"))
+        self.assertEqual(result.status, "experimental_zero_payload_ack")
+        self.assertEqual(serialize(result.reply), bytes.fromhex("3B03102024A9"))
+        for altered in (
+            AUXFrame(0x21, 0x10, MC_MOVE_POS, b"\x00"),
+            AUXFrame(0x20, 0x11, MC_MOVE_POS, b"\x00"),
+            AUXFrame(0x20, 0x10, MC_GET_MODEL, b"\x00"),
+            AUXFrame(0x20, 0x10, MC_MOVE_POS, b"\x01"),
+            AUXFrame(0x20, 0x10, MC_MOVE_POS, b"\x00\x00"),
+        ):
+            self.assertIsNone(dispatcher.dispatch(altered).reply)
+        self.assertEqual(self.fake.commands, [])
+
     def test_test_only_position_adapter_handles_wrap_without_raw_leakage(self) -> None:
         adapter = AUXCoordinateAdapter(
             az=AxisCoordinateConfig(neutral_modulus=100, neutral_zero=0, aux_zero=0, direction=1),

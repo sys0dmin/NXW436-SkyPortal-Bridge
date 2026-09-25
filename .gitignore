@@ -17,6 +17,7 @@ venv/
 # Captures / runtime evidence
 captures/
 *.log
+*.csv
 
 # OS
 Thumbs.db
