@@ -1,0 +1,2 @@
+run_label,payload_index,trial_index,payload_hex,window_index,window_nominal_start_s,window_nominal_end_s,sample_start_s,sample_end_s,start_raw,end_raw,signed_delta_counts,elapsed_s,counts_per_s,commanded_cps,degrees_per_s,valid_samples,invalid_samples,reverse_increments
+az-postrebuild-sustain-plus-1e-screen-r1,1,1,00001E,1,0.0,14.946516999996675,0.0,14.946516999996675,1047255,1047433,178,14.946516999996675,11.909129063315527,11.909129063315527,0.004047175627184017,77,0,0

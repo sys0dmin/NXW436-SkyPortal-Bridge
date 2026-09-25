@@ -1,0 +1,2 @@
+abort_reason,axis,preflight_alt_raw,preflight_alt_rx_bytes_hex,preflight_az_raw,preflight_az_rx_bytes_hex,requested_degrees,run_status,target_delta_counts
+ControllerAbort: controller maximum duration exceeded,az,1058540,1026EC,10125,00278D,-5,aborted,-14713

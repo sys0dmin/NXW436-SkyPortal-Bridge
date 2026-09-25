@@ -1,0 +1,4 @@
+label,expected_axis,expected_direction,requested_degrees,run_status,abort_reason,source_file
+goto-repeat-az-plus-5-r2,az,+,5,aborted,ControllerAbort: controller maximum duration exceeded,nxw436_goto_relative_goto-repeat-az-plus-5-r2_summary.csv
+goto-repeat-az-minus-5-r3,az,-,-5,aborted,ControllerAbort: controller maximum duration exceeded,nxw436_goto_relative_goto-repeat-az-minus-5-r3_summary.csv
+goto-repeat-alt-plus-5-r3,alt,+,5,aborted,ControllerAbort: unexpected opposite-direction encoder movement,nxw436_goto_relative_goto-repeat-alt-plus-5-r3_summary.csv

@@ -1,0 +1,2 @@
+abort_reason,axis,invalid_replies_total,no_progress_detected,preflight_alt_raw,preflight_alt_rx_bytes_hex,preflight_az_raw,preflight_az_rx_bytes_hex,recovery_attempted,recovery_count,recovery_failure_reason,recovery_payload,recovery_progress_counts,recovery_start_position,recovery_start_unwrapped,recovery_success,requested_degrees,run_status,stop_margin_counts,target_delta_counts
+ControllerAbort: unexpected opposite-direction encoder movement,az,0,False,1,000001,12509,0030DD,False,0,,,,,,,-5,aborted,200,-14713

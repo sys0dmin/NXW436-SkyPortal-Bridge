@@ -1,0 +1,29 @@
+# Python execution products; raw research CSV/SVG evidence remains tracked.
+__pycache__/
+*.py[cod]
+@"
+# Python
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Test/cache
+.pytest_cache/
+.coverage
+
+# Captures / runtime evidence
+captures/
+*.log
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Local config / secrets
+.env
+.env.*
+*.local
+"@ | Set-Content -Encoding UTF8 .gitignore

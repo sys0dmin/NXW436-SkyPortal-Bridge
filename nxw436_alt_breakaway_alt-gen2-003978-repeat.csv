@@ -1,0 +1,2 @@
+sequence,payload_hex,direction,duration_s,start_raw,end_raw,delta_counts,samples,outcome
+1,003978,+,3.0,1089,1163,74,17,commanded-direction-motion

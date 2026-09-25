@@ -1,0 +1,3 @@
+axis,direction,completed_n,aborted_n,mean_signed_settled_error_counts,median_signed_settled_error_counts,min_signed_settled_error_counts,max_signed_settled_error_counts,settled_error_stddev_counts,mean_absolute_error_counts,worst_absolute_error_counts,mean_position_at_stop_error_counts,mean_settled_coast_counts,settled_coast_stddev_counts,mean_motion_time_s,motion_time_stddev_s
+az,+,5,0,210.2,228.0,161.0,244.0,36.540388613149695,210.2,244.0,244.2,34.0,5.916079783099616,17.706150460010395,0.47184094454939207
+az,-,5,0,-227.2,-240.0,-264.0,-183.0,34.23010371003863,227.2,264.0,-257.0,-29.8,6.760177512462228,17.91734029999352,0.21544763914752782

@@ -1,0 +1,6 @@
+elapsed_s,payload_hex,raw_position,reason,remaining_counts,state,unwrapped_position
+0.00010960001964122057,00E5E3,8265,initial-distance,-14713,FAST,8265
+1.759182800014969,0072F1,319,remaining-distance-threshold,-6767,MEDIUM,319
+2.99050470002112,003978,1055758,remaining-distance-threshold,-2878,FINE,-3570
+4.04596550000133,002000,1053856,remaining-distance-threshold,-976,SLOW,-5472
+6.156751200003782,,1053119,conservative-stop-margin,-239,STOP,-6209
