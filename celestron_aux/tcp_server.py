@@ -84,7 +84,7 @@ class AUXTCPServer:
         self.dispatcher = dispatcher
         self.bind = bind
         self.port = port
-        self.logger = logger or logging.getLogger("aux.tcp_server")
+        self.logger = logger or logging.getLogger("celestron_aux.tcp_server")
         self.allow_synthetic_replies = allow_synthetic_replies
         self.record_observer = record_observer
         self.capture = (AUXCaptureSession(capture_root, client=client_label, bind=bind, port=port,

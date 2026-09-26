@@ -324,7 +324,7 @@ class AuxFrontendTests(unittest.TestCase):
         self.assertIsNone(result.reply)
 
     def test_tcp_records_decoded_frame_and_disabled_dispatch(self) -> None:
-        logger = logging.getLogger("aux-test")
+        logger = logging.getLogger("celestron_aux-test")
         logger.handlers.clear()
         logger.addHandler(logging.NullHandler())
         server = AUXTCPServer(self.dispatcher, logger=logger)
@@ -334,7 +334,7 @@ class AuxFrontendTests(unittest.TestCase):
         self.assertEqual(records[0]["payload_hex"], "01")
 
     def test_tcp_connection_sends_no_reply_and_resets_per_session(self) -> None:
-        logger = logging.getLogger("aux-loopback-test")
+        logger = logging.getLogger("celestron_aux-loopback-test")
         logger.handlers.clear()
         logger.addHandler(logging.NullHandler())
         server = AUXTCPServer(self.dispatcher, logger=logger)
