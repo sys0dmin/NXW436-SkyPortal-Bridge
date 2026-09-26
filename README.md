@@ -1,4 +1,4 @@
-# Celestron NXW436 SkyPortal Bridge
+# Мост Celestron NXW436 для SkyPortal
 
 Экспериментальный мост, который позволяет SkyPortal/SkySafari управлять старой
 Celestron NexStar GT с платой `NXW436 Rev A (11/2005)` без штатного Hand
@@ -26,29 +26,31 @@ HBG3-compatible Wi-Fi/TCP frontend
   NXW436 motor board
 ```
 
-## Current Status
+## Текущий Статус
 
-Manual control v1 is experimentally proven on real hardware:
+Ручное управление v1 экспериментально подтверждено на реальном оборудовании:
 
-- SkyPortal completes startup and opens telescope controls.
-- SkyPortal manual buttons move AZ and ALT through the complete TCP/AUX ->
+- SkyPortal завершает инициализацию и открывает управление телескопом.
+- Кнопки ручного управления SkyPortal перемещают AZ и ALT через полный путь
+  `TCP/AUX ->`
   `MountController` -> NXW436 path.
-- Raw NXW436 encoder feedback returns through `MC_GET_POSITION`; the SkyPortal
-  crosshair follows physical mount movement.
-- Session-local AUX coordinates handle modular wrap.
-- Startup-idempotent STOP is acknowledged without physical UART STOP before
-  the frontend owns movement on an axis.
-- After owned motion, SkyPortal release uses backend remembered direction and
-  verified same-prefix double STOP.
-- Optional immediate post-STOP position telemetry cannot suppress a successful
-  AUX STOP ACK. Subsequent normal position polling remains authoritative.
+- Raw NXW436 encoder feedback возвращается через `MC_GET_POSITION`; перекрестие
+  SkyPortal следует за физическим движением монтировки.
+- Session-local AUX coordinates корректно обрабатывают модульный wrap.
+- Идемпотентный STOP при инициализации получает ACK без physical UART STOP, пока frontend
+  не владеет движением оси.
+- После контролируемого движения отпускание кнопки SkyPortal использует сохранённое
+  direction backend и verified same-prefix double STOP.
+- Необязательная немедленная post-STOP position telemetry не может подавить
+  успешный AUX STOP ACK. Последующие normal position polls остаются
+  авторитетными.
 
-This is experimental hardware control, not a finished pointing/alignment,
-tracking, GoTo, or safety-certified product.
+Это экспериментальное управление оборудованием, а не завершённый продукт с
+pointing, alignment, tracking, GoTo или safety certification.
 
-## Verified NXW436 J1 Protocol
+## Подтверждённый NXW436 J1 Protocol
 
-Exact-board facts:
+Факты, подтверждённые на этой плате:
 
 | Function | AZ | ALT |
 | --- | --- | --- |
@@ -65,10 +67,10 @@ Positions are three-byte big-endian encoder values modulo:
 
 Do not infer additional NXW436 commands from other Celestron mount families.
 
-## SkyPortal Manual Rates
+## Ручные Скорости SkyPortal
 
-The real hardware manual policy is discrete and evidence-backed. It is not a
-formula or interpolation between payloads.
+Политика ручных скоростей на реальном оборудовании дискретна и основана на
+доказательствах. Это не формула и не интерполяция между payloads.
 
 | SkyPortal UI speed | AUX rate | Neutral tier | NXW436 payload |
 | --- | ---: | --- | --- |
@@ -77,17 +79,16 @@ formula or interpolation between payloads.
 | 3 | `0x07` | `MEDIUM` | `0072F1` |
 | 4 | `0x09` | `MANUAL_HIGH` | `00E5E3` |
 
-All other manual AUX rates are rejected with no UART movement and no success
-ACK.
+Все остальные ручные AUX rates отклоняются без UART movement и без success ACK.
 
-`00E5E3` has current direct USB-TTL validation for AZ+, AZ-, ALT+, and ALT-:
+`00E5E3` имеет текущую direct USB-TTL проверку для AZ+, AZ-, ALT+ и ALT-:
 valid encoder feedback, commanded-direction progress, no sustained reverse,
-same-prefix double STOP, and stable post-STOP samples.
+same-prefix double STOP и stable post-STOP samples.
 
-## Coordinate Model
+## Модель Координат
 
-The AUX frontend never exposes raw NXW436 encoder counts directly. Conversion
-is owned solely by `celestron_aux.AUXCoordinateAdapter`:
+AUX frontend никогда не выдаёт raw NXW436 encoder counts напрямую.
+Преобразование полностью принадлежит `celestron_aux.AUXCoordinateAdapter`:
 
 ```text
 NXW436 raw encoder coordinate
@@ -95,37 +96,37 @@ NXW436 raw encoder coordinate
         <-> AUX 24-bit coordinate
 ```
 
-Hardware mode initializes a temporary session zero from the current encoder
-positions and requires explicit AZ/ALT sign selection. This validates relative
-movement and display consistency only. It is not north/horizon zero, celestial
-alignment, permanent calibration, or pointing accuracy.
+Режим оборудования создаёт temporary session zero из текущих encoder positions
+и требует явного выбора AZ/ALT sign. Он проверяет только relative movement и
+согласованность отображения. Это не north/horizon zero, celestial alignment,
+permanent calibration или pointing accuracy.
 
-## Safety Boundaries
+## Границы Безопасности
 
-- Real hardware mode is explicit: `--backend nxw436 --serial COMx`.
-- It never falls back to `FakeMountBackend`.
-- Normal tests do not open COM or issue motor commands.
-- The AUX frontend does not know J1 wiring, NXW436 opcodes, payloads, or serial
-  transport details.
-- `NXW436MountBackend` does not know TCP, Wi-Fi, SkyPortal, or AUX framing.
-- STOP never guesses a direction and never sends both physical prefixes.
-- `MC_SET_POS_GUIDERATE (0x06)` remains disabled; it is not manual motion or
+- Режим реального оборудования включается явно:
+  `--backend nxw436 --serial COMx`.
+- Он никогда не переходит на `FakeMountBackend`.
+- Обычные tests не открывают COM и не отправляют motor commands.
+- AUX frontend не знает J1 wiring, NXW436 opcodes, payloads или serial transport
+  details.
+- `NXW436MountBackend` не знает TCP, Wi-Fi, SkyPortal или AUX framing.
+- STOP никогда не угадывает direction и не отправляет оба physical prefixes.
+- `MC_SET_POS_GUIDERATE (0x06)` остаётся disabled; это не manual motion и не
   tracking.
 
-## Hardware Launcher
+## Запуск Оборудования
 
-Do not run this command without reviewing the current experiment state,
-mechanical clearance, cable wrap, and explicit serial port.
+Не запускайте эту команду без проверки текущего experiment state, mechanical
+clearance, cable wrap и явного serial port.
 
 ```powershell
 python .\nxw436_hardware_experiment.py --backend nxw436 --serial COMx --bind <PC_LAN_IP> --broadcast <LAN_BROADCAST_IP> --mac <WIFI_MAC> --az-direction + --alt-direction +
 ```
 
-The launcher records AUX RX/TX, raw NXW436 position frames, session-zero
-conversion, motion/STOP events, and persisted capture evidence under
-`captures/`.
+Программа запуска записывает AUX RX/TX, raw NXW436 position frames, session-zero
+conversion, motion/STOP events и persisted capture evidence в `captures/`.
 
-## Offline Validation
+## Автономная Проверка
 
 ```powershell
 python -m unittest discover -p "test_*.py"
@@ -133,22 +134,23 @@ python -m py_compile mount_api.py fake_mount_backend.py nxw436_driver.py nxw436_
 git diff --check
 ```
 
-## Deferred Work
+## Отложенная Работа
 
-The following are intentionally out of scope for manual control v1:
+Следующее намеренно не входит в scope manual control v1:
 
-- SkyPortal GoTo and `MC_SLEW_DONE`;
-- tracking and guide-rate semantics;
-- alignment and absolute celestial pointing;
+- SkyPortal GoTo и `MC_SLEW_DONE`;
+- tracking и guide-rate semantics;
+- alignment и absolute celestial pointing;
 - permanent AZ/ALT calibration;
 - ESP32 port;
-- speed interpolation or compensation;
-- additional unsupported AUX manual rates.
+- speed interpolation или compensation;
+- дополнительные unsupported AUX manual rates.
 
-## Evidence
+## Доказательства
 
-The authoritative chronological record is [`research/NXW436.md`](research/NXW436.md).
-Frontend/AUX contracts and experimental classifications are in
+Авторитетная хронология находится в
+[`research/NXW436.md`](research/NXW436.md). Frontend/AUX contracts и
+experimental classifications находятся в
 [`research/AUX_NXW436_TRANSLATION.md`](research/AUX_NXW436_TRANSLATION.md).
-Current project handoff and constraints are in
+Текущий project handoff и constraints находятся в
 [`research/KILO_HANDOFF.md`](research/KILO_HANDOFF.md).
