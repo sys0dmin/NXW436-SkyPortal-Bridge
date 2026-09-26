@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from aux.hbg3_infrastructure_experiment import HBG3InfrastructureExperiment, hbg3_v38_advertisement
-from aux.messages import MC_GET_VER
+from celestron_aux.hbg3_infrastructure_experiment import HBG3InfrastructureExperiment, hbg3_v38_advertisement
+from celestron_aux.messages import MC_GET_VER
 
 
 class FakeServer:
@@ -37,11 +37,17 @@ class HBG3InfrastructureExperimentTests(unittest.TestCase):
         self.assertFalse(experiment.advertise_once(udp))
         self.assertEqual(len(udp.calls), 1)
 
-    def test_unmatched_get_ver_stops_for_review(self) -> None:
-        experiment = HBG3InfrastructureExperiment(FakeServer(), bind="127.0.0.1", broadcast="127.0.0.1", mac="00:00:00:00:00:00")
+    def test_unmatched_get_ver_is_recorded_without_stopping_experiment(self) -> None:
+        server = FakeServer()
+        experiment = HBG3InfrastructureExperiment(server, bind="127.0.0.1", broadcast="127.0.0.1", mac="00:00:00:00:00:00")
         experiment.observe_record({"command": MC_GET_VER, "dispatch_result": "recognized_synthetic_profile_unconfigured"})
         self.assertTrue(experiment.unmatched_get_ver_observed)
-        self.assertTrue(experiment.stop_event.is_set())
+        self.assertFalse(experiment.stop_event.is_set())
+        udp = RecordingUDP()
+        server.active_connection = True
+        self.assertFalse(experiment.advertise_once(udp))
+        server.active_connection = False
+        self.assertTrue(experiment.advertise_once(udp))
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from fake_mount_backend import FakeMountBackend
-from mount_api import Axis, Direction, MountController, MountStateError, SpeedTier, POSITION_MODULUS
+from mount_api import Axis, Direction, MountController, MountStateError, PositionFrameError, SpeedTier, POSITION_MODULUS
 from mount_model import POSITION_MODULUS as CANONICAL_POSITION_MODULUS
 from nxw436_driver import COUNTS_PER_REV, RAW_MODULO
 from nxw436_mount_backend import NXW436MountBackend
@@ -93,6 +93,12 @@ class MountApiTests(unittest.TestCase):
         ])
         # The actual NXW436 driver retains the experimentally required STOP x2;
         # this adapter must not substitute a different stop command or direction.
+
+    def test_nxw436_adapter_rejects_short_position_frame(self) -> None:
+        transport = RecordingTransport()
+        transport.query_position_raw = lambda _axis: b"\x01\x02"  # type: ignore[method-assign]
+        with self.assertRaises(PositionFrameError):
+            NXW436MountBackend(transport).get_position(Axis.AZ)
 
     def test_nxw436_goto_completion_is_not_exact_target_acquisition(self) -> None:
         transport = RecordingTransport()

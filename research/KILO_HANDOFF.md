@@ -2,15 +2,17 @@
 
 ## Current milestone
 
-Reverse engineering of the minimum NXW436 control path is complete enough for
-software integration. The neutral mount API and NXW436 backend are hardened.
-The next milestone is **research, then PC-hosted implementation** of the
-minimum Celestron-compatible network frontend needed by SkyPortal/SkySafari.
-Develop and test that frontend against `FakeMountBackend` first.
+Experimental HBG3-compatible SkyPortal control is proven end-to-end:
 
-This project is not building a replacement planetarium client. SkyPortal and
-SkySafari are intended phone clients. ESP32 firmware and physical control are
-later milestones.
+```text
+SkyPortal -> TCP/AUX frontend -> MountController -> NXW436 backend -> physical motor movement
+```
+
+The PC frontend has passed a full `FakeMountBackend` manual-motion loop and a
+controlled real NXW436 rate-`0x02` experiment. SkyPortal manual motion, dynamic
+position replies, direction-aware double STOP and session-local coordinate
+display are experimental evidence, not a finished production protocol or
+pointing/alignment solution.
 
 ## Completed milestones
 
@@ -25,6 +27,16 @@ later milestones.
 - Characterized a post-rebuild empirical near-sidereal operating point.
 - Added the frontend -> `MountController` -> backend integration boundary and
   an in-memory fake backend.
+- Implemented HBG3-compatible TCP/AUX framing, startup replies and capture
+  evidence with an explicit experimental profile.
+- Proved SkyPortal startup and telescope control UI against the PC frontend.
+- Proved experimental manual AUX motion through `FakeMountBackend`, including
+  changing position feedback, modular wrap and STOP.
+- Proved controlled real NXW436 manual movement for AUX rate `0x02` only,
+  mapped by `EXPERIMENTAL_CONSERVATIVE_MANUAL_POLICY` to
+  `SpeedTier.MANUAL_CONSERVATIVE` -> `0000F5`.
+- Fixed frontend STOP regression: a successful physical same-prefix double STOP
+  is ACKed independently of optional post-STOP position telemetry.
 
 ## Important source files
 
@@ -98,24 +110,33 @@ python .\nxw436_goto_relative.py --axis az --degrees 5 --az-off-tripod --dry-run
 python .\nxw436_goto_relative.py --help
 ```
 
-Baseline at handoff is 42 passing tests. Hardware commands require an explicit
+Current checkpoint: 98 tests passing. Hardware commands require an explicit
 task and operator authorization; do not use them as an ordinary smoke test.
 
-## Next planned milestone
+## Current unresolved observation
 
-1. Research reliable, cited Celestron-compatible network protocol behavior:
-   discovery, transport/session lifecycle, minimum first-client messages,
-   coordinates, framing, responses and timeouts.
-2. Separate primary documentation from captures, reports and hypotheses.
-3. Implement only the evidenced minimum as a PC-hosted frontend over
-   `FakeMountBackend`.
-4. Add protocol/frontend tests without J1, COM, ESP32 or motor movement.
-5. Review architecture before connecting the real backend.
+During recent integrated hardware runs, logical AZ `GET_POSITION` command `01`
+remained at raw `000001` while the physical AZ axis visibly moved. Do **not**
+claim an encoder, board, wiring, axis-remap, calibration or adapter fault yet.
+Historical direct-UART testing showed `06/07` movement changed `01`, while `15`
+was the independent ALT position channel. Current hardware telemetry now records
+both raw `01` and `15` channels on each SkyPortal position poll.
+
+AZ is visibly much faster than ALT at the same verified `0000F5` payload in the
+current physical setup. Do not add compensation until the direct-UART boundary
+is established.
+
+## Next planned experiment
+
+The next experiment is **not** another SkyPortal test. Use direct USB-TTL ->
+NXW436 UART testing, bypassing frontend/backend, to compare current raw `01` /
+`15` behavior and physical speed at the same verified `0000F5` payload. Preserve
+raw evidence and do not add software compensation, remapping or encoder
+workarounds before that boundary is known.
 
 ## Do not do yet
 
-- Do not implement SkyPortal/SkySafari or Celestron Wi-Fi protocol before its
-  research report exists.
+- Do not enable additional real AUX manual rates beyond `0x02`.
 - Do not start ESP32 firmware or physical handset work.
 - Do not change NXW436 commands, payloads, calibration, mechanics, GoTo stage
   thresholds, stop margins, recovery, STOP behavior or RX policy.

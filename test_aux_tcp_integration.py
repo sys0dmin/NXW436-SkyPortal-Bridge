@@ -9,10 +9,10 @@ import unittest
 import ast
 from pathlib import Path
 
-from aux.dispatcher import AUXDispatcher, SyntheticAUXProfile, VirtualMountIdentity
-from aux.framing import deserialize, serialize
-from aux.messages import AUXFrame, MC_GET_POSITION, MC_GET_VER
-from aux.tcp_server import AUXTCPServer
+from celestron_aux.dispatcher import AUXDispatcher, SyntheticAUXProfile, VirtualMountIdentity
+from celestron_aux.framing import deserialize, serialize
+from celestron_aux.messages import AUXFrame, MC_GET_POSITION, MC_GET_VER
+from celestron_aux.tcp_server import AUXTCPServer
 from fake_mount_backend import FakeMountBackend
 from mount_api import MountController
 
@@ -24,6 +24,45 @@ def free_port() -> int:
 
 
 class AuxTcpIntegrationTests(unittest.TestCase):
+    def test_unanswered_client_eof_does_not_stop_listener_and_second_client_connects(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            server = AUXTCPServer(
+                AUXDispatcher(MountController(FakeMountBackend())), bind="127.0.0.1", port=free_port(),
+                capture_root=Path(temporary), client_label="SkyPortal",
+            )
+            stop_event = threading.Event()
+            ready_event = threading.Event()
+            thread = threading.Thread(target=server.serve_until, args=(stop_event, ready_event), daemon=True)
+            thread.start()
+            self.assertTrue(ready_event.wait(1))
+            request = serialize(AUXFrame(0x20, 0xBD, MC_GET_VER))
+            for _ in range(2):
+                with socket.create_connection(("127.0.0.1", server.port)) as client:
+                    client.sendall(request)
+                    client.settimeout(0.1)
+                    with self.assertRaises(socket.timeout):
+                        client.recv(1)
+            time.sleep(0.2)
+            self.assertTrue(thread.is_alive())
+            stop_event.set()
+            thread.join(1)
+            server.close("test_complete")
+            session = next(Path(temporary).iterdir())
+            log = (session / "server.log").read_text(encoding="utf-8")
+            self.assertIn("tcp_server_started", log)
+            self.assertEqual(log.count("client_connected"), 2)
+            self.assertEqual(log.count("client_eof"), 2)
+            self.assertGreaterEqual(log.count("tcp_server_still_listening"), 2)
+
+    def test_client_reset_exits_only_handler(self) -> None:
+        class ResetClient:
+            def recv(self, _size: int) -> bytes:
+                raise ConnectionResetError()
+
+        server = AUXTCPServer(AUXDispatcher(MountController(FakeMountBackend())))
+        server.handle_connection(ResetClient(), ("127.0.0.1", 1))
+        self.assertFalse(server.active_connection)
+
     def test_live_tcp_recovers_persists_raw_and_never_replies(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             fake = FakeMountBackend()

@@ -33,6 +33,9 @@ class NXW436Transport(Protocol):
 
 
 def _payload_for(axis: Axis, speed: SpeedTier) -> bytes:
+    if speed is SpeedTier.MANUAL_CONSERVATIVE:
+        # Hardware-experiment-only policy; closed-loop GoTo profiles stay frozen.
+        return bytes.fromhex("0000F5")
     for stage in PROFILES[axis.value]:
         if stage.name == speed.value:
             return stage.payload
@@ -77,6 +80,10 @@ class NXW436MountBackend:
         frame = self.transport.query_position_raw(axis.value)
         if frame is None:
             raise PositionFrameError(f"NXW436 {axis.value} position timeout")
+        if len(frame) != 3:
+            raise PositionFrameError(
+                f"NXW436 {axis.value} invalid position frame length: {len(frame)}"
+            )
         raw = int.from_bytes(frame, "big")
         if not is_valid_raw_position(raw):
             raise PositionFrameError(

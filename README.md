@@ -25,8 +25,11 @@ STATUS: EXPERIMENTAL / WORK IN PROGRESS
 ✓ SkyPortal TCP/AUX connection confirmed
 ✓ MC_GET_VER
 ✓ MC_GET_MODEL
-○ SkyPortal startup handshake in progress
-○ AUX movement translation
-○ coordinate calibration
+✓ SkyPortal startup handshake and control UI
+✓ Experimental AUX manual movement via FakeMountBackend
+✓ Controlled NXW436 AUX rate 0x02 manual movement
+✓ Direction-aware same-prefix double STOP
+○ physical coordinate calibration / pointing
+○ direct-UART AZ/ALT encoder telemetry regression
 ○ tracking
 ○ ESP32 deployment
