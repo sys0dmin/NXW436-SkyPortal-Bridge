@@ -105,7 +105,7 @@ class MountBackend(Protocol):
 
     def stop(self, axis: Axis) -> None: ...
 
-    def goto(self, axis: Axis, target_position: int) -> GotoResult: ...
+    def goto(self, axis: Axis, target_position: int, *, cancellation_event: object | None = None) -> GotoResult: ...
 
     def get_axis_status(self, axis: Axis) -> AxisStatus: ...
 
@@ -138,11 +138,11 @@ class MountController:
     def stop_alt(self) -> None:
         self._backend.stop(Axis.ALT)
 
-    def goto_az(self, target_position: int) -> GotoResult:
-        return self._backend.goto(Axis.AZ, normalize_position(target_position))
+    def goto_az(self, target_position: int, *, cancellation_event: object | None = None) -> GotoResult:
+        return self._backend.goto(Axis.AZ, normalize_position(target_position), cancellation_event=cancellation_event)
 
-    def goto_alt(self, target_position: int) -> GotoResult:
-        return self._backend.goto(Axis.ALT, normalize_position(target_position))
+    def goto_alt(self, target_position: int, *, cancellation_event: object | None = None) -> GotoResult:
+        return self._backend.goto(Axis.ALT, normalize_position(target_position), cancellation_event=cancellation_event)
 
     def get_axis_status(self, axis: Axis) -> AxisStatus:
         return self._backend.get_axis_status(axis)

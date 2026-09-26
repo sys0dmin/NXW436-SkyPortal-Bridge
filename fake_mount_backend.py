@@ -7,6 +7,7 @@ does not model NXW436 timing, UART faults, mechanics, coast, or payload rates.
 from __future__ import annotations
 
 import time
+import threading
 from typing import Callable
 
 from mount_api import (
@@ -19,6 +20,7 @@ from mount_api import (
     normalize_position,
     signed_modular_delta,
 )
+from mount_model import POSITION_MODULUS
 
 
 class FakeMountBackend:
@@ -30,7 +32,8 @@ class FakeMountBackend:
     }
 
     def __init__(self, *, az_position: int = 0, alt_position: int = 0,
-                 monotonic_clock: Callable[[], float] = time.monotonic) -> None:
+                 monotonic_clock: Callable[[], float] = time.monotonic,
+                 goto_gate: threading.Event | None = None) -> None:
         self._positions = {
             Axis.AZ: normalize_position(az_position),
             Axis.ALT: normalize_position(alt_position),
@@ -42,6 +45,7 @@ class FakeMountBackend:
         self._clock = monotonic_clock
         now = self._clock()
         self._last_update = {Axis.AZ: now, Axis.ALT: now}
+        self._goto_gate = goto_gate
         self.commands: list[tuple[str, Axis, Direction | None, SpeedTier | None]] = []
 
     def get_position(self, axis: Axis) -> int:
@@ -74,10 +78,23 @@ class FakeMountBackend:
         signed_counts = counts if direction is Direction.PLUS else -counts
         self._positions[axis] = normalize_position(self._positions[axis] + signed_counts)
 
-    def goto(self, axis: Axis, target_position: int) -> GotoResult:
+    def goto(self, axis: Axis, target_position: int, *, cancellation_event: object | None = None) -> GotoResult:
         self._integrate(axis)
         start = self._positions[axis]
         target = normalize_position(target_position)
+        if self._goto_gate is not None:
+            self._last_direction[axis] = Direction.PLUS if ((target - start) % POSITION_MODULUS) < POSITION_MODULUS // 2 else Direction.MINUS
+            self._speed[axis] = SpeedTier.MEDIUM
+            self._motion_commanded[axis] = True
+            while not self._goto_gate.is_set():
+                if cancellation_event is not None and cancellation_event.is_set():
+                    self.stop(axis)
+                    raise RuntimeError("goto_cancelled")
+                self._goto_gate.wait(0.01)
+            self._positions[axis] = target
+            self._motion_commanded[axis] = False
+            self._speed.pop(axis, None)
+            return GotoResult(axis, start, target, signed_modular_delta(start, target), True, True, target, 0, "exact", {"fake_gated": True})
         delta = signed_modular_delta(start, target)
         self._positions[axis] = target
         self._motion_commanded[axis] = False

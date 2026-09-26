@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import threading
 
 import serial
 
@@ -56,6 +57,7 @@ class NXW436:
         self.post_command_delay = post_command_delay
         self.serial: serial.Serial | None = None
         self._last_direction: dict[str, str] = {}
+        self._transaction_lock = threading.RLock()
 
     def __enter__(self) -> "NXW436":
         self.open()
@@ -107,8 +109,9 @@ class NXW436:
         """
         if axis not in POSITION_COMMANDS:
             raise ValueError(f"Unknown axis: {axis}")
-        self._send(bytes([POSITION_COMMANDS[axis]]))
-        return self._read_exact(timeout=timeout)
+        with self._transaction_lock:
+            self._send(bytes([POSITION_COMMANDS[axis]]))
+            return self._read_exact(timeout=timeout)
 
     def get_position(self, axis: str, *, attempts: int = 5) -> int:
         if axis not in POSITION_COMMANDS:
@@ -125,8 +128,9 @@ class NXW436:
             raise ValueError(f"Unknown axis/direction: {axis} {direction}")
         if len(payload) != 3:
             raise ValueError("payload must be exactly three bytes")
-        self._send(bytes([MOVE_PREFIXES[(axis, direction)]]) + payload)
-        self._last_direction[axis] = direction
+        with self._transaction_lock:
+            self._send(bytes([MOVE_PREFIXES[(axis, direction)]]) + payload)
+            self._last_direction[axis] = direction
 
     def move_speed(self, axis: str, direction: str, speed: int) -> None:
         if speed not in NXW436_MEASURED_SPEEDS:
@@ -142,13 +146,14 @@ class NXW436:
             raise ValueError("Direction is required when this axis has not moved")
         prefix = MOVE_PREFIXES[(axis, direction)]
         command = bytes([prefix, 0, 0, 0])
-        try:
-            self._send(command)
-        finally:
-            # A second STOP is required even when the first serial write raises.
-            time.sleep(0.05)
-            self._send(command)
-            self._last_direction.pop(axis, None)
+        with self._transaction_lock:
+            try:
+                self._send(command)
+            finally:
+                # A second STOP is required even when the first serial write raises.
+                time.sleep(0.05)
+                self._send(command)
+                self._last_direction.pop(axis, None)
 
     def move_for(self, axis: str, direction: str, payload: bytes, seconds: float) -> tuple[int, int]:
         if not 0 < seconds <= 10:

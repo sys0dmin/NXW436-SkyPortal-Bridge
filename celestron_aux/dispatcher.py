@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from mount_api import Direction, MountController, MountError
+from mount_api import Axis, Direction, MountController, MountError
 
 from celestron_aux.coordinates import AUXCoordinateAdapter, CoordinateUnavailable
 from celestron_aux.messages import (
@@ -12,6 +12,7 @@ from celestron_aux.messages import (
     MC_GET_APPROACH, MC_GET_AUTOGUIDE_RATE, MC_GET_MAX_RATE, MC_GET_MAX_SLEW_RATE, MC_GET_POS_BACKLASH, MC_GOTO_SLOW, MC_MOVE_NEG, MC_MOVE_POS, MC_SET_AUTOGUIDE_RATE, MC_SET_POSITION, MC_SLEW_DONE,
 )
 from celestron_aux.virtual_mc import VirtualCelestronMotorControllers
+from celestron_aux.goto_coordinator import GoToCoordinator
 
 
 @dataclass(frozen=True)
@@ -74,13 +75,15 @@ class AUXDispatcher:
                  coordinate_adapter: AUXCoordinateAdapter | None = None,
                  identity: VirtualMountIdentity | None = None,
                  synthetic_profile: SyntheticAUXProfile | None = None,
-                 virtual_mcs: VirtualCelestronMotorControllers | None = None) -> None:
+                 virtual_mcs: VirtualCelestronMotorControllers | None = None,
+                 goto_coordinator: GoToCoordinator | None = None) -> None:
         self._controller = controller
         self._capabilities = capabilities or AUXCapabilities()
         self._coordinate_adapter = coordinate_adapter
         self._identity = identity
         self._synthetic_profile = synthetic_profile
         self._virtual_mcs = virtual_mcs
+        self._goto_coordinator = goto_coordinator
 
     def dispatch(self, frame: AUXFrame) -> DispatchResult:
         if frame.command not in KNOWN_DIAGNOSTIC_COMMANDS:
@@ -115,7 +118,32 @@ class AUXDispatcher:
             if aux is None:
                 return DispatchResult("recognized_position_unknown_destination")
             return DispatchResult("mount_query_reply", self._reply(frame, aux.to_bytes(3, "big")))
+        if frame.command in {MC_GOTO_FAST, MC_GOTO_SLOW}:
+            if self._goto_coordinator is None or self._coordinate_adapter is None:
+                return DispatchResult("recognized_goto_disabled")
+            if self._synthetic_profile is None or not self._synthetic_profile.permits(frame):
+                return DispatchResult("recognized_goto_profile_unconfigured")
+            if len(frame.payload) != 3:
+                return DispatchResult("recognized_goto_malformed_payload")
+            axis = {0x10: "az", 0x11: "alt"}.get(frame.destination)
+            if axis is None:
+                return DispatchResult("recognized_goto_unknown_destination")
+            try:
+                target = self._coordinate_adapter.from_aux(axis, int.from_bytes(frame.payload, "big"))
+                self._goto_coordinator.start(
+                    Axis.AZ if axis == "az" else Axis.ALT,
+                    target,
+                    variant=frame.command,
+                )
+            except Exception as error:
+                return DispatchResult(f"goto_rejected:{type(error).__name__}")
+            return DispatchResult("goto_started")
         if frame.command in {MC_MOVE_POS, MC_MOVE_NEG}:
+            if self._goto_coordinator is not None:
+                axis = {0x10: Axis.AZ, 0x11: Axis.ALT}.get(frame.destination)
+                if axis is not None and self._goto_coordinator.is_active(axis):
+                    if not self._goto_coordinator.cancel(axis, timeout=2.0):
+                        return DispatchResult("manual_motion_rejected_goto_active")
             if self._virtual_mcs is not None and self._synthetic_profile is not None and self._synthetic_profile.permits_simulated_manual_motion(frame):
                 rate = frame.payload[0]
                 if rate > 9:
@@ -174,8 +202,6 @@ class AUXDispatcher:
                 if self._virtual_mcs.set_autoguide_rate(frame.destination, frame.payload[0]):
                     return DispatchResult("virtual_autoguide_rate_updated", self._reply(frame, b""))
             return DispatchResult("recognized_autoguide_rate_disabled")
-        if frame.command in {MC_GOTO_FAST, MC_GOTO_SLOW}:
-            return DispatchResult("recognized_goto_disabled")
         if frame.command in {MC_SLEW_DONE, MC_SET_POSITION}:
             return DispatchResult("recognized_semantics_not_implemented")
         return DispatchResult("recognized_unsupported")

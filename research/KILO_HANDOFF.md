@@ -141,6 +141,19 @@ full `0x02/0x05/0x07/0x09` policy, live encoder feedback and crosshair movement.
 The next separate phase is SkyPortal GoTo plus `MC_SLEW_DONE`; do not begin it
 without explicit authorization.
 
+GoTo design audit is complete, but no implementation has started. The blocking
+issue is synchronous `RelativePositionController.run()` behind an inline TCP
+dispatcher. Before production GoTo, design an application-owned per-axis job
+coordinator and one serialized UART transaction owner. Preserve the frozen
+controller stages and recovery; do not guess the AUX not-done status byte or
+start GoTo until a Fake/client capture establishes the response contract.
+
+An isolated `GoToCoordinator` and cooperative cancellation hook are now
+implemented and validated only with an explicit FakeMountBackend profile. It
+keeps TCP dispatch responsive and supports independent AZ/ALT job state, but
+real NXW436 GoTo and AUX `MC_SLEW_DONE` replies remain disabled pending protocol
+evidence and further review.
+
 ## Do not do yet
 
 - Do not enable real AUX rate `0x09` or any unlisted rate without new exact-board

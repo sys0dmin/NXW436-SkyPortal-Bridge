@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import time
+import threading
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
@@ -338,7 +339,8 @@ class RelativePositionController:
         if self.consecutive_invalid > MAX_CONSECUTIVE_INVALID:
             raise ControllerAbort("three consecutive timeout/malformed position replies")
 
-    def run(self, *, max_seconds: float, settle_seconds: float) -> dict:
+    def run(self, *, max_seconds: float, settle_seconds: float,
+            cancellation_event: threading.Event | None = None) -> dict:
         # The direction prefix is known before first motion; pre-STOP clears a stale command.
         self.mount.stop(self.axis, self.direction)
         time.sleep(0.25)
@@ -358,6 +360,8 @@ class RelativePositionController:
         stop_reason = "timeout"
         try:
             while time.perf_counter() < deadline:
+                if cancellation_event is not None and cancellation_event.is_set():
+                    raise ControllerAbort("goto_cancelled")
                 time.sleep(self.sample_seconds)
                 try:
                     self._handle_sample()

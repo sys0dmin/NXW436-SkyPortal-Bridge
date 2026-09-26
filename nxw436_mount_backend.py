@@ -8,6 +8,7 @@ state machine is reused unchanged.
 from __future__ import annotations
 
 from typing import Protocol
+import threading
 
 from mount_api import (
     Axis,
@@ -112,7 +113,7 @@ class NXW436MountBackend:
         finally:
             self._motion_commanded[axis] = False
 
-    def goto(self, axis: Axis, target_position: int) -> GotoResult:
+    def goto(self, axis: Axis, target_position: int, *, cancellation_event: threading.Event | None = None) -> GotoResult:
         start = self.get_position(axis)
         target = normalize_position(target_position)
         delta = signed_modular_delta(start, target)
@@ -126,6 +127,7 @@ class NXW436MountBackend:
             details = controller.run(
                 max_seconds=self.goto_max_seconds,
                 settle_seconds=self.goto_settle_seconds,
+                cancellation_event=cancellation_event,
             )
         finally:
             self._motion_commanded[axis] = False

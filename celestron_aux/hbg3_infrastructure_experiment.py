@@ -19,6 +19,7 @@ from celestron_aux.coordinates import AUXCoordinateAdapter, AxisCoordinateConfig
 from celestron_aux.messages import MC_GET_APPROACH, MC_GET_AUTOGUIDE_RATE, MC_GET_MAX_RATE, MC_GET_MAX_SLEW_RATE, MC_GET_MODEL, MC_GET_POS_BACKLASH, MC_GET_VER, MC_MOVE_NEG, MC_MOVE_POS, MC_SET_AUTOGUIDE_RATE
 from celestron_aux.tcp_server import AUXTCPServer
 from celestron_aux.virtual_mc import VirtualCelestronMotorControllers
+from celestron_aux.goto_coordinator import GoToCoordinator
 from fake_mount_backend import FakeMountBackend
 from mount_api import MountController
 
@@ -103,6 +104,8 @@ def main(argv: list[str] | None = None) -> int:
             (0x20, 0x10, MC_SET_AUTOGUIDE_RATE, 1), (0x20, 0x11, MC_SET_AUTOGUIDE_RATE, 1),
             (0x20, 0x10, MC_GET_AUTOGUIDE_RATE, 0), (0x20, 0x11, MC_GET_AUTOGUIDE_RATE, 0),
             (0x20, 0x10, 0x01, 0), (0x20, 0x11, 0x01, 0),
+            (0x20, 0x10, 0x02, 3), (0x20, 0x11, 0x02, 3),
+            (0x20, 0x10, 0x17, 3), (0x20, 0x11, 0x17, 3),
         }),
         hypothetical_zero_payload_ack_requests=frozenset({
             (0x20, 0x10, MC_MOVE_POS, b"\x00"),
@@ -129,10 +132,13 @@ def main(argv: list[str] | None = None) -> int:
         alt=AxisCoordinateConfig(neutral_modulus=256, neutral_zero=0, aux_zero=0, direction=1),
     )
     fake_backend = FakeMountBackend(az_position=0x10, alt_position=0x20)
+    controller = MountController(fake_backend)
+    coordinator = GoToCoordinator(controller, enabled=True)
     dispatcher = AUXDispatcher(
-        MountController(fake_backend), AUXCapabilities(position_translation_enabled=True),
+        controller, AUXCapabilities(position_translation_enabled=True),
         coordinate_adapter=coordinate_adapter, identity=VirtualMountIdentity((major, minor)),
         synthetic_profile=profile, virtual_mcs=VirtualCelestronMotorControllers(),
+        goto_coordinator=coordinator,
     )
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     server = AUXTCPServer(
