@@ -32,9 +32,12 @@ pointing/alignment solution.
 - Proved SkyPortal startup and telescope control UI against the PC frontend.
 - Proved experimental manual AUX motion through `FakeMountBackend`, including
   changing position feedback, modular wrap and STOP.
-- Proved controlled real NXW436 manual movement for AUX rate `0x02` only,
-  mapped by `EXPERIMENTAL_CONSERVATIVE_MANUAL_POLICY` to
+- Proved controlled real NXW436 manual movement and encoder/AUX feedback for
+  AUX rate `0x02`, mapped by `EXPERIMENTAL_CONSERVATIVE_MANUAL_POLICY` to
   `SpeedTier.MANUAL_CONSERVATIVE` -> `0000F5`.
+- Restored unstable AZ encoder-feedback wire; direct USB-TTL and integrated
+  SkyPortal runs now show changing raw `01`, successful modular wrap and
+  crosshair movement following physical encoder motion.
 - Fixed frontend STOP regression: a successful physical same-prefix double STOP
   is ACKed independently of optional post-STOP position telemetry.
 
@@ -113,30 +116,29 @@ python .\nxw436_goto_relative.py --help
 Current checkpoint: 98 tests passing. Hardware commands require an explicit
 task and operator authorization; do not use them as an ordinary smoke test.
 
-## Current unresolved observation
+## Current phase
 
-During recent integrated hardware runs, logical AZ `GET_POSITION` command `01`
-remained at raw `000001` while the physical AZ axis visibly moved. Do **not**
-claim an encoder, board, wiring, axis-remap, calibration or adapter fault yet.
-Historical direct-UART testing showed `06/07` movement changed `01`, while `15`
-was the independent ALT position channel. Current hardware telemetry now records
-both raw `01` and `15` channels on each SkyPortal position poll.
+Encoder feedback wiring was repaired after the prior constant-AZ observation.
+Real SkyPortal end-to-end tests now show raw AZ `01` change during physical
+movement, correct wrap through `0x102A00`, changing AUX coordinates and a
+SkyPortal crosshair following the physical mount. Session-zero remains relative
+display calibration only; no pointing/alignment claim is made.
 
-AZ is visibly much faster than ALT at the same verified `0000F5` payload in the
-current physical setup. Do not add compensation until the direct-UART boundary
-is established.
+The manual-rate expansion proof completed: current real policy enables
+`0x02 -> 0000F5`, `0x05 -> 003978`, `0x07 -> 0072F1`,
+`0x09 -> 00E5E3`. The final mapping rests on current four-quadrant direct-USB
+evidence for `00E5E3`, not external 114GT interpolation. Do not compensate
+AZ/ALT speed, interpolate payloads, remap channels, or alter GoTo profiles.
 
-## Next planned experiment
-
-The next experiment is **not** another SkyPortal test. Use direct USB-TTL ->
-NXW436 UART testing, bypassing frontend/backend, to compare current raw `01` /
-`15` behavior and physical speed at the same verified `0000F5` payload. Preserve
-raw evidence and do not add software compensation, remapping or encoder
-workarounds before that boundary is known.
+Manual control v1 is closed: real SkyPortal map-guided manual pointing used the
+full `0x02/0x05/0x07/0x09` policy, live encoder feedback and crosshair movement.
+The next separate phase is SkyPortal GoTo plus `MC_SLEW_DONE`; do not begin it
+without explicit authorization.
 
 ## Do not do yet
 
-- Do not enable additional real AUX manual rates beyond `0x02`.
+- Do not enable real AUX rate `0x09` or any unlisted rate without new exact-board
+  evidence; current policy enables only `0x02`, `0x05` and `0x07`.
 - Do not start ESP32 firmware or physical handset work.
 - Do not change NXW436 commands, payloads, calibration, mechanics, GoTo stage
   thresholds, stop margins, recovery, STOP behavior or RX policy.

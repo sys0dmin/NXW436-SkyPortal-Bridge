@@ -104,6 +104,8 @@ def main() -> None:
     parser.add_argument("--sample-seconds", type=float, default=0.18)
     parser.add_argument("--settle-seconds", type=float, default=0.75,
                         help="quiet interval after STOP STOP before the next payload")
+    parser.add_argument("--post-stop-samples", type=int, default=3,
+                        help="raw position samples after verified STOP STOP")
     parser.add_argument("--load-context", default="unspecified",
                         help="mechanical/load description stored in raw and summary CSV")
     parser.add_argument("--az-off-tripod", action="store_true",
@@ -120,6 +122,8 @@ def main() -> None:
         parser.error("--sample-seconds must be 0.05..0.5")
     if not 0.25 <= args.settle_seconds <= 5.0:
         parser.error("--settle-seconds must be 0.25..5.0")
+    if not 1 <= args.post_stop_samples <= 10:
+        parser.error("--post-stop-samples must be 1..10")
     if not valid_label(args.run_label):
         parser.error("--run-label may contain only letters, digits, '-' and '_'")
     if args.axis == "az" and not args.az_off_tripod:
@@ -168,7 +172,9 @@ def main() -> None:
                 "preflight_alt_raw": alt_preflight,
                 "preflight_alt_rx_bytes_hex": alt_frame.hex().upper(),
                 "run_status": "not_started",
+                "post_stop_samples_requested": args.post_stop_samples,
             }
+            command_started = time.perf_counter()
             print(f"POINT {point_index}/{len(args.payloads)} payload={payload_value:06X}")
             try:
                 mount.stop(args.axis, args.direction)
@@ -294,6 +300,31 @@ def main() -> None:
                     summary["stop_error"] = str(stop_error)
                     print(f"EMERGENCY STOP WRITE FAILED: {stop_error}")
                 time.sleep(args.settle_seconds)
+                post_stop_positions: list[int] = []
+                for post_index in range(1, args.post_stop_samples + 1):
+                    frame = mount.query_position_raw(args.axis)
+                    received = time.perf_counter()
+                    common = {
+                        "point_index": point_index, "payload_hex": f"{payload_value:06X}",
+                        "timestamp": time.time(), "monotonic_s": received,
+                        "elapsed_s": received - command_started, "phase": "post_stop",
+                        "load_context": args.load_context,
+                    }
+                    if frame is None:
+                        raw_rows.append(common | {"rx_bytes_hex": "", "reply_kind": "timeout", "raw_position": "", "delta_counts": "", "valid": False, "note": f"post-stop-{post_index}"})
+                    else:
+                        raw = int.from_bytes(frame, "big")
+                        valid = is_valid_raw_position(raw)
+                        raw_rows.append(common | {"rx_bytes_hex": frame.hex().upper(), "reply_kind": "post-stop-valid" if valid else "malformed-outside-modulus", "raw_position": raw, "delta_counts": "", "valid": valid, "note": f"post-stop-{post_index}"})
+                        if valid:
+                            post_stop_positions.append(raw)
+                    if post_index < args.post_stop_samples:
+                        time.sleep(args.sample_seconds)
+                summary["post_stop_valid_samples"] = len(post_stop_positions)
+                if post_stop_positions:
+                    summary["post_stop_first_raw"] = post_stop_positions[0]
+                    summary["post_stop_last_raw"] = post_stop_positions[-1]
+                    summary["post_stop_delta_counts"] = signed_delta(post_stop_positions[0], post_stop_positions[-1])
             summaries.append(summary)
             if summary["run_status"] != "completed":
                 break

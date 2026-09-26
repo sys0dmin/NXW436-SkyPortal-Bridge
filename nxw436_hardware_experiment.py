@@ -32,8 +32,13 @@ HARDWARE_MANUAL_RATE = 0x02
 
 
 def hardware_speed_policy(rate: int) -> SpeedTier | None:
-    """Experimental policy: only SkyPortal UI speed 1 reaches real hardware."""
-    return SpeedTier.MANUAL_CONSERVATIVE if rate == HARDWARE_MANUAL_RATE else None
+    """Explicit evidence-backed manual policy; never interpolate payloads."""
+    return {
+        0x02: SpeedTier.MANUAL_CONSERVATIVE,
+        0x05: SpeedTier.FINE,
+        0x07: SpeedTier.MEDIUM,
+        0x09: SpeedTier.MANUAL_HIGH,
+    }.get(rate)
 
 
 def build_hardware_profile() -> SyntheticAUXProfile:
@@ -179,11 +184,11 @@ def main(argv: list[str] | None = None) -> int:
         server = AUXTCPServer(
             dispatcher, bind=args.bind, port=2000, capture_root=args.capture_root,
             client_label="SkyPortal-NXW436-Hardware", allow_synthetic_replies=True,
-            synthetic_profile_name="nxw436-hardware-rate-02-only",
+            synthetic_profile_name="nxw436-hardware-rates-02-05-07-09-only",
             metadata_extra={
                 "mode": "explicit-hardware-experiment",
                 "serial_port": args.serial,
-                "manual_rate_policy": "EXPERIMENTAL_CONSERVATIVE_MANUAL_POLICY: AUX 0x02 -> SpeedTier.MANUAL_CONSERVATIVE -> verified 0000F5 payload; 0x05/0x07/0x09 rejected",
+                "manual_rate_policy": "EXPLICIT_MANUAL_POLICY: AUX 0x02 -> MANUAL_CONSERVATIVE -> 0000F5; 0x05 -> FINE -> 003978; 0x07 -> MEDIUM -> 0072F1; 0x09 -> MANUAL_HIGH -> 00E5E3",
                 "calibration": "session-local encoder zero; not pointing/alignment calibration",
                 "az_session_zero": f"{adapter.configuration('az').neutral_zero:06X}",
                 "alt_session_zero": f"{adapter.configuration('alt').neutral_zero:06X}",

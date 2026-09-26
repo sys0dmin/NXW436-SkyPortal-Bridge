@@ -36,6 +36,9 @@ def _payload_for(axis: Axis, speed: SpeedTier) -> bytes:
     if speed is SpeedTier.MANUAL_CONSERVATIVE:
         # Hardware-experiment-only policy; closed-loop GoTo profiles stay frozen.
         return bytes.fromhex("0000F5")
+    if speed is SpeedTier.MANUAL_HIGH:
+        # Hardware-experiment-only policy; closed-loop GoTo profiles stay frozen.
+        return bytes.fromhex("00E5E3")
     for stage in PROFILES[axis.value]:
         if stage.name == speed.value:
             return stage.payload

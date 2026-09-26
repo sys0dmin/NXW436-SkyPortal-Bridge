@@ -46,15 +46,23 @@ class NXW436HardwareExperimentTests(unittest.TestCase):
         )
         return dispatcher, transport
 
-    def test_only_rate_02_moves_and_ack_follows_backend_success(self) -> None:
+    def test_explicit_rates_map_to_verified_payloads_for_both_axes_and_directions(self) -> None:
         dispatcher, transport = self.make_dispatcher()
-        result = dispatcher.dispatch(AUXFrame(0x20, 0x10, MC_MOVE_POS, b"\x02"))
-        self.assertEqual(result.status, "simulated_manual_motion_accepted")
-        self.assertEqual(result.reply.payload, b"")
-        self.assertEqual(transport.commands[0][:3], ("move", "az", "+"))
-        self.assertEqual(transport.commands[0][3], bytes.fromhex("0000F5"))
+        cases = (
+            (0x10, MC_MOVE_POS, 0x02, "az", "+", "0000F5"),
+            (0x10, MC_MOVE_NEG, 0x05, "az", "-", "003978"),
+            (0x11, MC_MOVE_POS, 0x07, "alt", "+", "0072F1"),
+            (0x11, MC_MOVE_NEG, 0x05, "alt", "-", "003978"),
+            (0x10, MC_MOVE_NEG, 0x09, "az", "-", "00E5E3"),
+            (0x11, MC_MOVE_POS, 0x09, "alt", "+", "00E5E3"),
+        )
+        for destination, command, rate, axis, direction, payload in cases:
+            result = dispatcher.dispatch(AUXFrame(0x20, destination, command, bytes((rate,))))
+            self.assertEqual(result.status, "simulated_manual_motion_accepted")
+            self.assertEqual(result.reply.payload, b"")
+            self.assertEqual(transport.commands[-1], ("move", axis, direction, bytes.fromhex(payload)))
         count = len(transport.commands)
-        for rate in (0x05, 0x07, 0x09):
+        for rate in (0x08, 0x0A):
             self.assertIsNone(dispatcher.dispatch(AUXFrame(0x20, 0x10, MC_MOVE_POS, bytes((rate,)))).reply)
         self.assertEqual(len(transport.commands), count)
 

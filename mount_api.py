@@ -32,6 +32,7 @@ class SpeedTier(str, Enum):
     FINE = "FINE"
     SLOW = "SLOW"
     MANUAL_CONSERVATIVE = "MANUAL_CONSERVATIVE"
+    MANUAL_HIGH = "MANUAL_HIGH"
 
 
 class MountError(RuntimeError):

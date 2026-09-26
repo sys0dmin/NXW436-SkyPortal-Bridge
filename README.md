@@ -27,9 +27,14 @@ STATUS: EXPERIMENTAL / WORK IN PROGRESS
 ✓ MC_GET_MODEL
 ✓ SkyPortal startup handshake and control UI
 ✓ Experimental AUX manual movement via FakeMountBackend
-✓ Controlled NXW436 AUX rate 0x02 manual movement
+✓ Real SkyPortal manual control on NXW436
+✓ Real encoder position feedback during manual use
+✓ SkyPortal crosshair follows physical mount movement
+✓ AUX manual rates 0x02 / 0x05 / 0x07 / 0x09 mapped to discrete validated NXW436 payloads
+✓ Current four-quadrant direct-UART validation for 0x09 / 00E5E3
 ✓ Direction-aware same-prefix double STOP
+✓ Startup-idempotent STOP and best-effort post-STOP telemetry
 ○ physical coordinate calibration / pointing
-○ direct-UART AZ/ALT encoder telemetry regression
+○ SkyPortal GoTo + MC_SLEW_DONE
 ○ tracking
 ○ ESP32 deployment

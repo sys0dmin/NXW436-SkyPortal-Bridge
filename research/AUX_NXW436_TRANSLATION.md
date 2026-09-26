@@ -254,12 +254,25 @@ not AZ north, ALT horizon, pointing alignment or persistent physical constants.
 
 `REAL_SKYPORTAL_CAPTURE_OBSERVED` UI mapping is: UI 1 -> AUX `02`, UI 2 ->
 `05`, UI 3 -> `07`, UI 4 -> `09`, observed on both axes and directions.
-The first real-hardware policy enables only AUX `02` for `MC_MOVE_POS/NEG` and
-maps it to dedicated neutral `SpeedTier.MANUAL_CONSERVATIVE`; existing
-`NXW436MountBackend` selects verified `0000F5` only for that tier. This is
-`EXPERIMENTAL_CONSERVATIVE_MANUAL_POLICY`,
-not a numeric rate conversion or NXW436 physical-rate claim. `05/07/09` return
-no ACK and issue no UART command in hardware mode.
+Explicit hardware manual policy now maps only evidence-backed discrete regions:
+
+| AUX rate | Neutral tier | NXW436 payload | Evidence classification |
+| --- | --- | --- | --- |
+| `02` | `MANUAL_CONSERVATIVE` | `0000F5` | current controlled hardware end-to-end, plus exact-board direct UART. |
+| `05` | `FINE` | `003978` | exact-board bidirectional ALT and AZ characterization; discrete empirical region. |
+| `07` | `MEDIUM` | `0072F1` | exact-board bidirectional ALT and AZ characterization; discrete empirical region. |
+| `09` | `MANUAL_HIGH` | `00E5E3` | current exact-board direct USB-TTL AZ+/AZ−/ALT+/ALT− proof: valid directed progress, no invalid/reverse samples, same-prefix double STOP and stable post-STOP reads. |
+
+This is `EXPLICIT_MANUAL_POLICY`, not a numeric rate conversion, interpolation,
+or NXW436 physical-rate claim. Frozen GoTo profiles are unchanged. Any rate not
+listed above returns no ACK and issues no UART movement in hardware mode.
+
+The latest real hardware session is classified `REAL_SKYPORTAL_MANUAL_USE`, not
+systematic speed-matrix validation. It confirms all four mapped payloads through
+the full frontend/backend path, live encoder/AUX feedback, modular wrap and
+same-prefix double STOP. Optional immediate post-STOP `PositionFrameError` does
+not suppress the already accepted AUX STOP ACK; subsequent regular polling
+returns valid positions.
 
 SkyPortal `MC_MOVE_POS 24 00` after a prior negative move uses
 `MountController.stop_*`; backend remembered actual direction selects the
