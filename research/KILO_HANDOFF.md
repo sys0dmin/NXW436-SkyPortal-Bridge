@@ -130,6 +130,12 @@ The manual-rate expansion proof completed: current real policy enables
 evidence for `00E5E3`, not external 114GT interpolation. Do not compensate
 AZ/ALT speed, interpolate payloads, remap channels, or alter GoTo profiles.
 
+The former experimental startup kick/preload workarounds were removed after
+mechanical work. Manual movement and the initial GoTo stage now send their
+requested payload directly. Frozen GoTo stages and AZ same-payload MEDIUM
+recovery remain unchanged; recovery is not startup assist. Tracking remains
+unimplemented and no implicit kick is part of future motion architecture.
+
 Manual control v1 is closed: real SkyPortal map-guided manual pointing used the
 full `0x02/0x05/0x07/0x09` policy, live encoder feedback and crosshair movement.
 The next separate phase is SkyPortal GoTo plus `MC_SLEW_DONE`; do not begin it

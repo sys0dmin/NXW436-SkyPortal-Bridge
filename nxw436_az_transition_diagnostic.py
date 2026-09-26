@@ -14,7 +14,6 @@ MEDIUM_SECONDS = 8.0
 PROGRESS_WINDOW_S = 1.5
 MIN_PROGRESS_COUNTS = 20
 POST_NO_PROGRESS_S = 1.0
-KICK_SECONDS = 0.5
 RECOVERY_SECONDS = 3.0
 MAX_BAD = 2
 MAX_CPS = 10_000
@@ -30,7 +29,7 @@ def valid_frame(mount, axis="az"):
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument("direction", choices=("+", "-"))
-    p.add_argument("--mode", choices=("passive","resend-medium","kick"), default="passive")
+    p.add_argument("--mode", choices=("passive","resend-medium"), default="passive")
     p.add_argument("--port", default="COM5"); p.add_argument("--az-off-tripod", action="store_true")
     p.add_argument("--label", required=True); p.add_argument("--observation", default="")
     p.add_argument("--fast-seconds", type=float, default=FAST_SECONDS); p.add_argument("--medium-seconds", type=float, default=MEDIUM_SECONDS)
@@ -44,7 +43,6 @@ def main():
     print(f"mode={a.mode}; FAST={FAST.hex().upper()} {a.fast_seconds}s; MEDIUM={MEDIUM.hex().upper()} {a.medium_seconds}s; progress window={PROGRESS_WINDOW_S}s / {MIN_PROGRESS_COUNTS} counts")
     if a.dry_run: return
     if a.cycles > 1:
-        if a.mode == "kick": p.error("--mode kick is not available for multi-cycle hunt")
         command=[sys.executable,"nxw436_az_transition_cycles.py","--port",a.port,"--az-off-tripod","--cycles",str(a.cycles),"--mode",a.mode,"--label",a.label]
         if a.observation: command += ["--observation",a.observation]
         raise SystemExit(subprocess.call(command))
@@ -104,9 +102,6 @@ def main():
                 observe(mount,"MEDIUM_POST_NO_PROGRESS",POST_NO_PROGRESS_S)
                 if a.mode=="resend-medium":
                     event("TX_RESEND_MEDIUM", bytes([0x06 if a.direction=="+" else 0x07])+MEDIUM); mount.move("az",a.direction,MEDIUM); observe(mount,"MEDIUM_RESEND",RECOVERY_SECONDS)
-                elif a.mode=="kick":
-                    event("TX_KICK_FAST", bytes([0x06 if a.direction=="+" else 0x07])+FAST); mount.move("az",a.direction,FAST); observe(mount,"KICK",KICK_SECONDS)
-                    event("TX_MEDIUM_AFTER_KICK", bytes([0x06 if a.direction=="+" else 0x07])+MEDIUM); mount.move("az",a.direction,MEDIUM); observe(mount,"MEDIUM_AFTER_KICK",RECOVERY_SECONDS)
             summary.update({"run_status":"completed","no_progress_detected":no_progress,"final_raw":previous_raw,"final_unwrapped":unwrapped,"total_elapsed_s":time.perf_counter()-started,"invalid_samples_total":sum(not r['valid'] for r in rows)})
         except (Abort,serial.SerialException,KeyboardInterrupt) as e:
             summary.update({"run_status":"aborted","abort_reason":type(e).__name__+": "+str(e)})

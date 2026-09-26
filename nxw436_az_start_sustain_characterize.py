@@ -1,10 +1,9 @@
 """Bounded AZ start-from-rest and sustain characterization for NXW436.
 
-This diagnostic is intentionally outside the production controller.  It keeps
-start threshold and running threshold separate: ``start`` uses every selected
-payload from STOP, while ``sustain`` first gives a short verified 0072F1 kick,
-then observes the selected payload.  Candidate payloads are always explicit;
-no external 114GT speed table is treated as NXW436 calibration.
+This diagnostic is intentionally outside the production controller. Every
+selected payload starts directly from STOP and is observed independently.
+Candidate payloads are always explicit; no external 114GT speed table is
+treated as NXW436 calibration.
 """
 
 from __future__ import annotations
@@ -23,7 +22,6 @@ from nxw436_low_speed_characterize import (
 )
 
 
-KICK_PAYLOAD = bytes.fromhex("0072F1")  # measured on this NXW436; not an external-table assumption
 MAX_CONSECUTIVE_INVALID = 2
 MAX_PLAUSIBLE_COUNTS_PER_SECOND = 10_000
 MIN_PLAUSIBLE_DELTA_COUNTS = 1_000
@@ -231,7 +229,6 @@ def load_raw_rows(path: Path) -> list[dict]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("direction", choices=("+", "-"))
-    parser.add_argument("--mode", choices=("start", "sustain"), required=True)
     parser.add_argument("--payloads", nargs="+", required=True, type=parse_payload,
                         help="ordered explicit candidate payloads; no default sweep")
     parser.add_argument("--trials", type=int, default=3, help="independent STOP-to-STOP trials per payload")
@@ -241,10 +238,8 @@ def main() -> None:
     parser.add_argument("--observation-seconds", type=float, default=8.0)
     parser.add_argument("--sample-seconds", type=float, default=0.18)
     parser.add_argument("--settle-seconds", type=float, default=1.0)
-    parser.add_argument("--kick-seconds", type=float, default=0.5,
-                        help="sustain mode only: duration of measured 0072F1 breakaway kick")
     parser.add_argument("--warmup-seconds", type=float, default=1.0,
-                        help="sustain mode only: unmeasured interval after transition from kick")
+                        help="unmeasured interval after direct candidate start")
     parser.add_argument("--min-progress-counts", type=int, default=20)
     parser.add_argument("--target-cps", type=float,
                         help="optional target for sustain reporting; does not alter commands")
@@ -265,8 +260,6 @@ def main() -> None:
         parser.error("--sample-seconds must be 0.05..0.5")
     if not 0.5 <= args.settle_seconds <= 5.0:
         parser.error("--settle-seconds must be 0.5..5.0")
-    if not 0.2 <= args.kick_seconds <= 1.0:
-        parser.error("--kick-seconds must be 0.2..1.0")
     if not 0.5 <= args.warmup_seconds < args.observation_seconds - 1.0:
         parser.error("--warmup-seconds must be >=0.5 and leave 1.0 s for sustain measurement")
     if args.min_progress_counts < 2:
@@ -284,11 +277,9 @@ def main() -> None:
         parser.error(f"--compare-raw does not exist: {args.compare_raw}")
 
     plan = " ".join(f"{value:06X}" for value in args.payloads)
-    print(f"AZ {args.mode} diagnostic, direction={args.direction}; trials={args.trials}; payloads={plan}")
-    print("Every trial is independent: STOP STOP -> settle -> start read -> [kick] -> candidate -> STOP STOP -> settle.")
+    print(f"AZ direct-start diagnostic, direction={args.direction}; trials={args.trials}; payloads={plan}")
+    print("Every trial is independent: STOP STOP -> settle -> start read -> candidate -> STOP STOP -> settle.")
     print("Reliability means every trial has valid samples, >= min commanded progress, and two-half stability.")
-    if args.mode == "sustain":
-        print(f"Kick is fixed measured NXW436 payload 0072F1 for {args.kick_seconds:.2f}s; no FAST kick is used.")
     if args.dry_run:
         print(f"DRY RUN: would write {raw_path}, {summary_path}, and {windows_path}; COM is not opened.")
         return
@@ -311,13 +302,11 @@ def main() -> None:
             for trial_index in range(1, args.trials + 1):
                 payload = payload_value.to_bytes(3, "big")
                 summary: dict = {
-                    "run_label": args.run_label, "mode": args.mode, "direction": args.direction,
+                    "run_label": args.run_label, "mode": "direct", "direction": args.direction,
                     "payload_index": payload_index, "payload_hex": f"{payload_value:06X}",
                     "trial_index": trial_index, "trials_requested": args.trials,
                     "observation_seconds": args.observation_seconds, "sample_seconds": args.sample_seconds,
-                    "settle_seconds": args.settle_seconds, "kick_payload_hex": "0072F1" if args.mode == "sustain" else "",
-                    "kick_seconds": args.kick_seconds if args.mode == "sustain" else "",
-                    "warmup_seconds": args.warmup_seconds if args.mode == "sustain" else "",
+                    "settle_seconds": args.settle_seconds, "warmup_seconds": args.warmup_seconds,
                     "min_progress_counts": args.min_progress_counts, "target_cps": args.target_cps if args.target_cps is not None else "",
                     "preflight_az_raw": az_preflight, "preflight_alt_raw": alt_preflight,
                     "run_status": "not_started",
@@ -331,15 +320,9 @@ def main() -> None:
                     command_started = time.perf_counter()
                     previous_raw, previous_time = start_raw, command_started
                     candidate_started = command_started
-                    if args.mode == "sustain":
-                        mount.move("az", args.direction, KICK_PAYLOAD)
-                        time.sleep(args.kick_seconds)
-                        mount.move("az", args.direction, payload)
-                        candidate_started = time.perf_counter()
-                    else:
-                        mount.move("az", args.direction, payload)
+                    mount.move("az", args.direction, payload)
                     deadline = candidate_started + args.observation_seconds
-                    measure_deadline = candidate_started + (args.warmup_seconds if args.mode == "sustain" else 0.0)
+                    measure_deadline = candidate_started + args.warmup_seconds
                     measure_start_raw: int | None = None
                     measure_start_time: float | None = None
                     measure_samples: list[tuple[float, int]] = []
@@ -404,12 +387,7 @@ def main() -> None:
                     measurement_delta = signed_delta(measure_start_raw, end_raw)
                     measurement_elapsed = end_time - measure_start_time
                     commanded_progress = signed_delta(start_raw, end_raw) * direction_sign
-                    # In sustain mode the kick proves only that the axis was
-                    # moving before the candidate.  The candidate must itself
-                    # produce enough post-warm-up encoder progress.
-                    reliability_progress = (
-                        measurement_delta * direction_sign if args.mode == "sustain" else commanded_progress
-                    )
+                    reliability_progress = commanded_progress
                     stable, stability_reason, first_half_cps, second_half_cps, half_rate_ratio = motion_stability_metrics(
                         measure_samples, direction_sign
                     )

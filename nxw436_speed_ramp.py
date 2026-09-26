@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 from nxw436_driver import (
-    COUNTS_PER_REV, GT114_SPEED_PAYLOADS, NXW436,
+    COUNTS_PER_REV, NXW436,
     is_valid_raw_position, signed_delta,
 )
 
@@ -155,7 +155,6 @@ def main():
     parser.add_argument("--step-seconds", type=float, default=3.0)
     parser.add_argument("--settle-seconds", type=float, default=0.5)
     parser.add_argument("--sample-seconds", type=float, default=0.15)
-    parser.add_argument("--warmup-seconds", type=float, default=3.0)
     parser.add_argument("--minimum-cps", type=float, default=1.0)
     parser.add_argument(
         "--run-label",
@@ -169,8 +168,6 @@ def main():
         parser.error("--settle-seconds must be >=0 and less than step duration")
     if not 0.03 <= args.sample_seconds <= 0.5:
         parser.error("--sample-seconds must be 0.03..0.5")
-    if not 0.0 <= args.warmup_seconds <= 10.0:
-        parser.error("--warmup-seconds must be 0..10")
     if not args.run_label.replace("-", "").replace("_", "").isalnum():
         parser.error("--run-label may contain only letters, digits, '-' and '_'")
 
@@ -181,8 +178,7 @@ def main():
     grid = args.grid or DEFAULT_GRID
     if args.sweep == "low-to-high":
         grid = tuple(reversed(grid))
-    preload_seconds = 0.5 if args.sweep == "low-to-high" else args.warmup_seconds
-    total_seconds = len(grid) * args.step_seconds + preload_seconds
+    total_seconds = len(grid) * args.step_seconds
     if total_seconds > 60:
         parser.error("total commanded duration exceeds 60 seconds")
 
@@ -203,15 +199,6 @@ def main():
 
     with NXW436(args.port) as mount:
         try:
-            if args.sweep == "high-to-low":
-                mount.move("alt", args.direction, payload_bytes(max(grid)))
-                running = True
-                time.sleep(args.warmup_seconds)
-            else:
-                mount.move("alt", args.direction, GT114_SPEED_PAYLOADS[8])
-                running = True
-                time.sleep(preload_seconds)
-
             for step, payload in enumerate(grid, start=1):
                 mount.move("alt", args.direction, payload_bytes(payload))
                 running = True

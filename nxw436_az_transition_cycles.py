@@ -8,7 +8,7 @@ from nxw436_progress_detector import evaluate_no_progress
 
 FAST=bytes.fromhex("00E5E3"); MEDIUM=bytes.fromhex("0072F1")
 SAMPLE_S=.15; FAST_S=2.; MEDIUM_S=8.; WINDOW_S=1.5; MIN_PROGRESS=20
-RESEND_S=2.; KICK_S=.5; AFTER_KICK_S=2.; MAX_BAD=2; MAX_CPS=10_000
+RESEND_S=2.; MAX_BAD=2; MAX_CPS=10_000
 class Abort(RuntimeError): pass
 
 def main():
@@ -46,7 +46,7 @@ def main():
     event(c,"CYCLE_START"); stop(c,mount,pre=True);time.sleep(.25)
     f,start,kind=read(mount)
     if kind!="valid":raise Abort(f"cycle {c} initial {kind}")
-    prev=start; prev_t=time.perf_counter(); unwrapped=start; bad=invalid=jumps=timeouts=0;cycle_t=time.perf_counter(); fast_progress=0; medium_progress=0; no=False;resend=False;resend_ok=False;kick=False;kick_ok=False;afterkick_ok=False
+    prev=start; prev_t=time.perf_counter(); unwrapped=start; bad=invalid=jumps=timeouts=0;cycle_t=time.perf_counter(); fast_progress=0; medium_progress=0; no=False;resend=False;resend_ok=False
     def sample(phase,payload):
      nonlocal prev,prev_t,unwrapped,bad,invalid,jumps,timeouts
      now=time.perf_counter();f,x,k=read(mount);d="";v=False;vel=""

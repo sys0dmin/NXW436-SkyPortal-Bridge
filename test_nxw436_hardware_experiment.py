@@ -66,6 +66,20 @@ class NXW436HardwareExperimentTests(unittest.TestCase):
             self.assertIsNone(dispatcher.dispatch(AUXFrame(0x20, 0x10, MC_MOVE_POS, bytes((rate,)))).reply)
         self.assertEqual(len(transport.commands), count)
 
+    def test_each_manual_request_starts_with_requested_payload_only(self) -> None:
+        cases = (
+            (0x10, MC_MOVE_POS, 0x02, "0000F5"),
+            (0x10, MC_MOVE_NEG, 0x05, "003978"),
+            (0x11, MC_MOVE_POS, 0x07, "0072F1"),
+            (0x11, MC_MOVE_NEG, 0x09, "00E5E3"),
+        )
+        for destination, command, rate, payload in cases:
+            dispatcher, transport = self.make_dispatcher()
+            self.assertIsNotNone(dispatcher.dispatch(AUXFrame(0x20, destination, command, bytes((rate,)))).reply)
+            moves = [entry for entry in transport.commands if entry[0] == "move"]
+            self.assertEqual(moves, [moves[0]])
+            self.assertEqual(moves[0][3], bytes.fromhex(payload))
+
     def test_negative_move_then_skyportal_pos_zero_stops_negative_direction(self) -> None:
         dispatcher, transport = self.make_dispatcher()
         self.assertIsNotNone(dispatcher.dispatch(AUXFrame(0x20, 0x11, MC_MOVE_NEG, b"\x02")).reply)

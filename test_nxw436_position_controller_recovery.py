@@ -102,6 +102,19 @@ class ProductionAzMediumRecoveryTests(unittest.TestCase):
         self.assertEqual(result["recovery_success"], None)
         self.assertTrue(any(row["state"] == "MEDIUM" for row in controller.rows))
 
+    def test_first_goto_move_is_selected_stage_without_start_assist(self):
+        clock = FakeClock()
+        mount = FakeMount([100000, 100040, 100080, 100080, 100080])
+        with (
+            patch.object(controller_module.time, "perf_counter", clock.perf_counter),
+            patch.object(controller_module.time, "time", clock.time),
+            patch.object(controller_module.time, "sleep", clock.sleep),
+        ):
+            RelativePositionController(mount, "az", 100).run(max_seconds=20.0, settle_seconds=0.3)
+        moves = [command for command in mount.commands if command[0] == "move" and command[3] != b"\0\0\0"]
+        self.assertEqual(moves[0][3], PROFILES["az"][-1].payload)
+        self.assertEqual(len(moves), 1)
+
     def test_negative_normal_medium_motion_has_no_resend(self):
         _, mount, result = run_with_fake_mount(normal_finish_positions_negative(), target=-6000)
         medium_moves = [command for command in mount.commands if command[0] == "move" and command[3] == bytes.fromhex("0072F1")]

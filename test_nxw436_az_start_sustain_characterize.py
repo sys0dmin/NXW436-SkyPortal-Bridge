@@ -28,9 +28,7 @@ class StartSustainClassificationTests(unittest.TestCase):
             "invalid-samples-observed",
         )
 
-    def test_sustain_kick_progress_must_not_mask_insufficient_candidate_progress(self):
-        # A high progress before the candidate is irrelevant here: the caller
-        # supplies only post-warm-up candidate progress to this function.
+    def test_direct_candidate_progress_must_meet_minimum(self):
         self.assertEqual(
             classify_trial(reliability_progress=7, stable=True, invalid_samples=0, min_progress_counts=20),
             (False, "insufficient-commanded-progress"),

@@ -26,16 +26,12 @@ def main():
     parser.add_argument("--port", default="COM5")
     parser.add_argument("--seconds", type=float, default=3.0)
     parser.add_argument("--interval", type=float, default=0.20)
-    parser.add_argument("--preload-payload", type=parse_payload)
-    parser.add_argument("--preload-seconds", type=float, default=0.5)
     parser.add_argument("--az-off-tripod", action="store_true")
     args = parser.parse_args()
     if not 0 < args.seconds <= 10:
         parser.error("--seconds must be >0 and <=10")
     if not 0.02 <= args.interval <= 1:
         parser.error("--interval must be 0.02..1 seconds")
-    if args.preload_payload is not None and not 0 < args.preload_seconds <= 1:
-        parser.error("--preload-seconds must be >0 and <=1")
     if args.axis == "az" and not args.az_off_tripod:
         parser.error(
             "AZ motion is blocked: clear cables / remove mount from tripod, "
@@ -51,21 +47,8 @@ def main():
         samples = [(time.perf_counter(), before)]
         print(f"START {args.axis.upper()} {before:06X} raw={before}")
         measurement_before = before
-        if args.preload_payload is not None:
-            print(
-                "PRELOAD", args.preload_payload.hex(" ").upper(),
-                f"for {args.preload_seconds:.1f}s",
-            )
         print("MOVE", args.payload.hex(" ").upper())
         try:
-            if args.preload_payload is not None:
-                mount.move(args.axis, args.direction, args.preload_payload)
-                time.sleep(args.preload_seconds)
-                measurement_before = mount.get_position(args.axis)
-                print(
-                    f"TARGET_START {args.axis.upper()} "
-                    f"{measurement_before:06X} raw={measurement_before}"
-                )
             mount.move(args.axis, args.direction, args.payload)
             motion_started = time.perf_counter()
             deadline = motion_started + args.seconds
