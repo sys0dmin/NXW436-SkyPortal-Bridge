@@ -402,3 +402,275 @@ The real NXW436 launcher does **not** inject a coordinator and therefore does
 not enable hardware GoTo. `MC_GOTO_FAST`, `MC_GOTO_SLOW` and wire
 `MC_SLEW_DONE` replies remain disabled there. This is
 `IMPLEMENTED_AND_FAKE_VALIDATED`, not hardware validation.
+
+## GoTo response evidence and fake ACK experiment
+
+The pinned HBG3 v9.11 virtual motor-controller source provides source-confirmed
+behavior for the fake-only ACK experiment:
+
+- `mc_handle_request()` accepts `MC_GOTO_FAST` and `MC_GOTO_SLOW`, stores the
+  24-bit target and starts virtual slew state;
+- `_emulate_begin()` constructs a reply with swapped source/destination, the
+  same command and zero payload;
+- `emulate_send_reply()` finalizes the regular AUX frame and checksum;
+- `MC_GOTO_DONE (0x13)` returns `0x00` while `mc->slew_rate` is nonzero and
+  `0xFF` after the virtual slew reaches its target.
+
+Source: HBG3 v9.11 (`VERSION v9.11`),
+`https://rtr.ca/hbg3/hbg3.ino.txt`: `mc_handle_request()` around L3948-L3985,
+`_emulate_begin()` L2554-L2568 and `emulate_send_reply()` L10569-L10590.
+This is `SOURCE_CONFIRMED` for the HBG3 virtual emulator, not real
+motor-controller evidence.
+
+For the observed request:
+
+```text
+RX: 3B 06 20 10 02 EB 67 C1 B5
+TX: 3B 03 10 20 02 CB
+```
+
+`CB` is validated by the project's canonical additive-zero serializer. The
+fake-only profile now emits this empty-payload swapped-address reply for
+`0x02` and `0x17` on both virtual axes. Hardware GoTo remains disabled. This is
+`HBG3_V911_BEHAVIOR` used as a `FAKE_CLIENT_ACCEPTED` experiment, not
+`REAL_MOTOR_CONTROLLER_BEHAVIOR`.
+
+## REAL_SKYPORTAL_SLEW_DONE_CAPTURE
+
+The subsequent real SkyPortal fake-mount capture accepted the empty GoTo ACKs
+for both AZM and ALT and then began polling `MC_SLEW_DONE (0x13)`. This upgrades
+the following to `CLIENT_CAPTURE_CONFIRMED`:
+
+- `20 -> 10 02 <target>` followed by empty `10 -> 20 02` ACK;
+- `20 -> 11 02 <target>` followed by empty `11 -> 20 02` ACK;
+- continued `MC_GET_POSITION` during active fake GoTo;
+- `20 -> 10 13` polling approximately every three seconds.
+
+The fake profile now projects coordinator state using source-confirmed HBG3
+v9.11 virtual semantics:
+
+```text
+GOTO_ACTIVE -> axis -> 20 13 00
+COMPLETED   -> axis -> 20 13 FF
+```
+
+Canonical frames for AZM are:
+
+```text
+3B 04 10 20 13 00 B9
+3B 04 10 20 13 FF BA
+```
+
+ALT equivalents are:
+
+```text
+3B 04 11 20 13 00 B8
+3B 04 11 20 13 FF B9
+```
+
+`IDLE`, `STOPPING`, `FAILED` and `CANCELLED` remain explicitly unmapped and do
+not become successful completion. Hardware profile remains disabled. `0x17`,
+ALT GoTo and post-release completion behavior require further capture.
+
+### Full two-stage client capture
+
+Capture `captures/20260927T001935Z-SkyPortal-HBG3-Infrastructure-AUX`
+closes the fake FAST/SLOW handshake:
+
+```text
+00:20:20.863  GOTO_FAST AZ  target 0FB00C -> empty ACK
+00:20:20.878  GOTO_FAST ALT target 1F9AE0 -> empty ACK
+00:20:20.905  SLEW_DONE AZ  -> 00
+00:20:20.910  SLEW_DONE ALT -> 00
+```
+
+SkyPortal continued the per-axis position/status cycle approximately every
+`0.53..0.55 s`. The operator created the gate file for FAST:
+
+```text
+00:20:30.184  goto_gate_released
+00:20:30.185  AZ COMPLETED, ALT COMPLETED
+00:20:30.613  SLEW_DONE AZ  -> FF
+00:20:30.620  SLEW_DONE ALT -> FF
+```
+
+Immediately afterwards SkyPortal started the second stage:
+
+```text
+00:20:30.624  GOTO_SLOW AZ  target 10112A -> empty ACK
+00:20:30.627  GOTO_SLOW ALT target 1FF1B8 -> empty ACK
+00:20:31.158  SLEW_DONE AZ  -> 00
+00:20:31.162  SLEW_DONE ALT -> 00
+```
+
+The launcher had rearmed and removed the gate file after FAST. The second file
+creation released SLOW:
+
+```text
+00:20:46.135  goto_gate_released
+00:20:46.135  ALT COMPLETED, AZ COMPLETED
+00:20:46.350  SLEW_DONE AZ  -> FF
+00:20:46.354  SLEW_DONE ALT -> FF
+```
+
+After SLOW completion SkyPortal continued position polling and did not resend
+GoTo in the remaining capture window. This makes the complete sequence
+`FAKE_CLIENT_ACCEPTED`: per-axis FAST ACK, active `00`, completed `FF`, per-axis
+SLOW ACK, active `00`, completed `FF`. It remains fake-only evidence; hardware
+GoTo is still disabled.
+
+### Client acceptance of active SLEW_DONE
+
+Capture `captures/20260927T000015Z-SkyPortal-HBG3-Infrastructure-AUX`
+confirms the complete active-state fake handshake:
+
+```text
+00:01:09.712  RX 20 -> 10 02 0FCBF1
+              TX 10 -> 20 02        [3B03102002CB]
+00:01:09.716  RX 20 -> 11 02 1F87CE
+              TX 11 -> 20 02        [3B03112002CA]
+
+00:01:10.194  GET_POSITION AZ
+00:01:10.203  GET_POSITION ALT
+00:01:10.208  RX 20 -> 10 13
+              TX 10 -> 20 13 00     [3B0410201300B9]
+00:01:10.211  RX 20 -> 11 13
+              TX 11 -> 20 13 00     [3B0411201300B8]
+```
+
+SkyPortal repeated the cycle in the order
+`GET_POSITION AZ -> GET_POSITION ALT -> SLEW_DONE AZ -> SLEW_DONE ALT` every
+approximately `0.53..0.55 s` until the server was stopped. There were no GoTo
+retries, dispatch errors, disconnects or `MC_GOTO_SLOW` requests. This makes
+empty GoTo ACKs and `SLEW_DONE active=00` `FAKE_CLIENT_ACCEPTED` for both axes.
+
+The operator did create the configured gate file in the earlier run. That old
+capture had no gate-detection lifecycle record, so the exact reason it was not
+observed was not proven; attributing it specifically to different working
+directories was a hypothesis, not a confirmed root cause.
+
+The launcher now resolves one absolute path before startup and uses it for
+metadata, stale-file removal and the watcher. It logs:
+
+```text
+goto_gate_path=<absolute path>
+goto_gate_initial_exists=<bool>
+goto_gate_released path=<absolute path>
+goto_job axis=AZ state=COMPLETED
+goto_job axis=ALT state=COMPLETED
+```
+
+An automated regression creates the file only after both jobs are
+`GOTO_ACTIVE`, verifies active `SLEW_DONE=00`, then verifies both jobs become
+`COMPLETED` and return `SLEW_DONE=FF`. Real post-completion SkyPortal behavior
+was subsequently captured as described below.
+
+### Gate release and real FAST-to-SLOW behavior
+
+Capture `captures/20260927T001148Z-SkyPortal-HBG3-Infrastructure-AUX`
+confirms the fixed gate lifecycle:
+
+```text
+00:11:48.961  goto_gate_path=D:\Documents\Develop\Celestron NexStar GT\captures\release-goto
+00:11:48.961  goto_gate_initial_exists=False
+00:12:57.227  goto_job axis=AZ state=GOTO_ACTIVE
+00:12:57.233  goto_job axis=ALT state=GOTO_ACTIVE
+00:13:05.256  goto_gate_released path=<same absolute path>
+00:13:05.256  goto_job axis=AZ state=COMPLETED
+00:13:05.256  goto_job axis=ALT state=COMPLETED
+```
+
+On the next client status cycle SkyPortal received:
+
+```text
+AZ  SLEW_DONE FF: 3B04102013FFBA
+ALT SLEW_DONE FF: 3B04112013FFB9
+```
+
+SkyPortal then immediately sent `MC_GOTO_SLOW=0x17` to both axes:
+
+```text
+RX 20 -> 10 17 1025B5   TX 3B03102017B6
+RX 20 -> 11 17 1FE3A9   TX 3B03112017B5
+```
+
+The first implementation left the one-shot gate set after FAST completion, so
+those SLOW jobs transitioned `GOTO_ACTIVE -> COMPLETED` immediately. The
+launcher now automatically clears the event, removes the gate file and rearms
+the same absolute path after both FAST jobs complete. A second file creation is
+therefore required to release SLOW. An automated regression proves both stages
+remain active until their corresponding post-start file creation and then reach
+`COMPLETED`/`FF`. Real SkyPortal acceptance of a prolonged active SLOW phase
+still requires one final interactive capture. Position polling remains active.
+
+## REAL_SKYPORTAL_FAKE_GOTO_CAPTURE
+
+Capture:
+
+```text
+captures/20260926T231936Z-SkyPortal-HBG3-Infrastructure-AUX
+```
+
+Classification: `CLIENT_CAPTURE_CONFIRMED` for received frames and
+`FAKE_CLIENT_ACCEPTED` only for the existing startup/manual replies.
+
+After startup and long position polling, SkyPortal sent the following exact
+AZ GoTo request:
+
+```text
+2026-09-26T23:24:57.499  RX 20 -> 10  command 02  payload EB67C1
+raw: 3B06201002B6ABDE89
+dispatch: goto_started:GOTO_ACTIVE
+```
+
+No TCP/AUX response was generated for that GoTo request. SkyPortal retried the
+same frame at approximately three-second intervals:
+
+```text
+23:25:00.499  RX 20 -> 10  02 EB67C1  dispatch goto_rejected:RuntimeError
+23:25:03.491  RX 20 -> 10  02 EB67C1  dispatch goto_rejected:RuntimeError
+```
+
+The retries confirm that the client did not treat the first no-response GoTo as
+accepted. They are not a second independent GoTo policy; the coordinator
+rejected them because the first AZ job was still active.
+
+During and after the active job SkyPortal continued polling position:
+
+```text
+20 -> 10 01   -> changing AZ payloads
+20 -> 11 01   -> ALT payload 000000
+```
+
+Observed AZ replies included `2A0000`, `910000`, `FA0000`, `640000`, `CE0000`,
+`380000`, `A10000`, `0D0000`, `740000`, `DD0000`, `490000`, `B10000`,
+`1C0000`, `840000`, `EE0000`, `580000`, `C30000`, `2C0000`, `970000`,
+`120000`, `7C0000`, showing that the TCP handler remained responsive and the
+fake position continued to change.
+
+This capture contains **no** frames with command `0x13` and no `0x17` GoTo
+request. Therefore, for this real SkyPortal session:
+
+- `MC_GOTO_FAST=0x02`: `CLIENT_CAPTURE_CONFIRMED` for AZ request;
+- `MC_GOTO_SLOW=0x17`: `UNKNOWN` / not observed;
+- `MC_SLEW_DONE=0x13`: `UNKNOWN` / not observed;
+- `MC_GET_POSITION=0x01` during active GoTo: `CLIENT_CAPTURE_CONFIRMED`;
+- GoTo ACK expectation: no reply was sent and retries followed;
+- two-axis GoTo order: not established because ALT GoTo was not sent;
+- active/not-done wire byte: no client request, so still `UNKNOWN`;
+- completion behavior after gate release: not captured in this session.
+
+No synthetic `MC_SLEW_DONE` response is justified by this capture. The next
+fake experiment should release the gate only after collecting the active
+position/retry evidence, then observe whether the client sends a new request or
+closes/retries. A separate session is needed to test ALT/two-axis behavior.
+
+## Alignment observation
+
+The capture does not contain a distinct AUX alignment command or an explicit
+wire-level `aligned=true` response. The second TCP session begins with manual
+movement and position polling, then later sends GoTo. This is consistent with
+the user completing enough UI-side alignment interaction for SkyPortal to
+unlock GoTo, but the exact UI action and any purely client-side alignment state
+are not proven by AUX frames. No alignment facade was added and no
+`MC_SET_POSITION`, tracking or alignment response was fabricated.

@@ -44,6 +44,8 @@ class SyntheticAUXProfile:
     experimental_approach_value_00_requests: frozenset[tuple[int, int, int, bytes]] = frozenset()
     experimental_hbg3_v38_max_slew_rate_requests: frozenset[tuple[int, int, int, bytes]] = frozenset()
     experimental_hbg3_v38_max_rate_requests: frozenset[tuple[int, int, int, bytes]] = frozenset()
+    experimental_goto_ack_requests: frozenset[tuple[int, int, int, bytes]] = frozenset()
+    experimental_goto_ack_shapes: frozenset[tuple[int, int, int, int]] = frozenset()
     simulated_manual_motion_requests: frozenset[tuple[int, int, int, int]] = frozenset()
 
     def permits(self, frame: AUXFrame) -> bool:
@@ -63,6 +65,12 @@ class SyntheticAUXProfile:
 
     def is_experimental_hbg3_v38_max_rate(self, frame: AUXFrame) -> bool:
         return (frame.source, frame.destination, frame.command, frame.payload) in self.experimental_hbg3_v38_max_rate_requests
+
+    def is_experimental_goto_ack(self, frame: AUXFrame) -> bool:
+        return (
+            (frame.source, frame.destination, frame.command, frame.payload) in self.experimental_goto_ack_requests
+            or (frame.source, frame.destination, frame.command, len(frame.payload)) in self.experimental_goto_ack_shapes
+        )
 
     def permits_simulated_manual_motion(self, frame: AUXFrame) -> bool:
         return (frame.source, frame.destination, frame.command, len(frame.payload)) in self.simulated_manual_motion_requests
@@ -118,6 +126,20 @@ class AUXDispatcher:
             if aux is None:
                 return DispatchResult("recognized_position_unknown_destination")
             return DispatchResult("mount_query_reply", self._reply(frame, aux.to_bytes(3, "big")))
+        if frame.command == MC_SLEW_DONE:
+            if self._goto_coordinator is None or self._synthetic_profile is None:
+                return DispatchResult("recognized_slew_done_disabled")
+            if not self._synthetic_profile.permits(frame):
+                return DispatchResult("recognized_slew_done_profile_unconfigured")
+            axis = {0x10: Axis.AZ, 0x11: Axis.ALT}.get(frame.destination)
+            if axis is None or frame.payload:
+                return DispatchResult("recognized_slew_done_malformed")
+            state = self._goto_coordinator.state(axis)
+            if state.value == "GOTO_ACTIVE":
+                return DispatchResult("slew_active", self._reply(frame, b"\x00"))
+            if state.value == "COMPLETED":
+                return DispatchResult("slew_done", self._reply(frame, b"\xff"))
+            return DispatchResult(f"slew_done_state_unmapped:{state.value}")
         if frame.command in {MC_GOTO_FAST, MC_GOTO_SLOW}:
             if self._goto_coordinator is None or self._coordinate_adapter is None:
                 return DispatchResult("recognized_goto_disabled")
@@ -137,7 +159,8 @@ class AUXDispatcher:
                 )
             except Exception as error:
                 return DispatchResult(f"goto_rejected:{type(error).__name__}")
-            return DispatchResult("goto_started")
+            reply = self._reply(frame, b"") if self._synthetic_profile.is_experimental_goto_ack(frame) else None
+            return DispatchResult("goto_started:GOTO_ACTIVE", reply)
         if frame.command in {MC_MOVE_POS, MC_MOVE_NEG}:
             if self._goto_coordinator is not None:
                 axis = {0x10: Axis.AZ, 0x11: Axis.ALT}.get(frame.destination)

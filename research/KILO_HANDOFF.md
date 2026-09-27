@@ -154,6 +154,43 @@ keeps TCP dispatch responsive and supports independent AZ/ALT job state, but
 real NXW436 GoTo and AUX `MC_SLEW_DONE` replies remain disabled pending protocol
 evidence and further review.
 
+The first real SkyPortal -> Fake GoTo capture is now available at
+`captures/20260926T231936Z-SkyPortal-HBG3-Infrastructure-AUX`. It confirms one
+AZ `MC_GOTO_FAST (0x02)` request with a 3-byte target, continued changing
+`MC_GET_POSITION` replies while the fake job was active, and client retries of
+the same GoTo after receiving no GoTo reply. It contains no `MC_GOTO_SLOW
+(0x17)` or `MC_SLEW_DONE (0x13)` frames, so no status byte has been enabled or
+guessed. ALT GoTo and gate-release completion remain untested.
+
+The subsequent fake-only capture accepted empty GoTo ACKs for AZM and ALT and
+began `MC_SLEW_DONE (0x13)` polling. The fake profile now projects
+source-confirmed HBG3 virtual semantics `GOTO_ACTIVE -> 0x00` and
+`COMPLETED -> 0xFF` per axis. Hardware GoTo remains disabled; ALT/two-axis
+completion and post-gate client behavior remain to be captured.
+
+The first interactive completion run did create `release-goto`, but the old
+capture lacked gate lifecycle observability; its exact non-detection cause was
+not proven. The launcher now resolves/logs one absolute path. Capture
+`20260927T001148Z` confirms gate detection, both FAST jobs completing,
+per-axis `SLEW_DONE=FF`, and real SkyPortal immediately issuing
+`MC_GOTO_SLOW=0x17` for AZ and ALT. The one-shot gate remained set, so fake SLOW
+jobs completed immediately in that capture. The launcher now rearms the same
+absolute gate path after both FAST jobs complete; the operator must create the
+file a second time to release SLOW. Offline regression validates both stages;
+real prolonged-SLOW client acceptance remains to be captured.
+
+Capture `20260927T001935Z` now validates the full real-client fake sequence:
+FAST AZ/ALT -> empty ACKs -> active `SLEW_DONE=00` -> first gate -> `FF` ->
+SLOW AZ/ALT -> empty ACKs -> active `00` -> second gate -> `FF`. SkyPortal kept
+position polling throughout and sent no further GoTo after SLOW completion in
+the observed window. Hardware GoTo remains disabled.
+
+Capture `20260927T000015Z` confirms real SkyPortal acceptance of both axis GoTo
+ACKs and per-axis active `SLEW_DONE=00`. It polls position and status for both
+axes every about `0.53..0.55 s` without retrying GoTo. The gate was not
+released, so `COMPLETED -> FF`, post-completion behavior and any `0x17` slow
+GoTo remain unvalidated.
+
 ## Do not do yet
 
 - Do not enable real AUX rate `0x09` or any unlisted rate without new exact-board

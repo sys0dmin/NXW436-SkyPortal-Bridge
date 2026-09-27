@@ -1,9 +1,19 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
+import threading
+from pathlib import Path
 
-from celestron_aux.hbg3_infrastructure_experiment import HBG3InfrastructureExperiment, hbg3_v38_advertisement
-from celestron_aux.messages import MC_GET_VER
+from celestron_aux.dispatcher import AUXDispatcher, SyntheticAUXProfile
+from celestron_aux.goto_coordinator import GoToCoordinator, GotoState
+from celestron_aux.hbg3_infrastructure_experiment import (
+    HBG3InfrastructureExperiment, hbg3_v38_advertisement, resolved_gate_path,
+    configure_two_stage_gate,
+)
+from celestron_aux.messages import AUXFrame, MC_GET_VER, MC_SLEW_DONE
+from fake_mount_backend import FakeMountBackend
+from mount_api import Axis, MountController
 
 
 class FakeServer:
@@ -48,6 +58,57 @@ class HBG3InfrastructureExperimentTests(unittest.TestCase):
         self.assertFalse(experiment.advertise_once(udp))
         server.active_connection = False
         self.assertTrue(experiment.advertise_once(udp))
+
+    def test_gate_file_releases_fast_then_rearms_and_releases_slow(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            gate_path = resolved_gate_path(Path(temporary) / "release-goto")
+            self.assertTrue(gate_path.is_absolute())
+            self.assertFalse(gate_path.exists())
+            gate = threading.Event()
+            controller = MountController(FakeMountBackend(goto_gate=gate))
+            coordinator = GoToCoordinator(controller, enabled=True)
+            logs: list[str] = []
+            coordinator.state_observer = configure_two_stage_gate(
+                coordinator, gate_path, gate, logs.append, poll_seconds=0.01,
+            )
+            dispatcher = AUXDispatcher(
+                controller,
+                synthetic_profile=SyntheticAUXProfile(frozenset({
+                    (0x20, 0x10, MC_SLEW_DONE, 0),
+                    (0x20, 0x11, MC_SLEW_DONE, 0),
+                })),
+                goto_coordinator=coordinator,
+            )
+            az = coordinator.start(Axis.AZ, 100, variant=0x02)
+            alt = coordinator.start(Axis.ALT, 200, variant=0x02)
+            self.assertEqual(coordinator.state(Axis.AZ), GotoState.GOTO_ACTIVE)
+            self.assertEqual(coordinator.state(Axis.ALT), GotoState.GOTO_ACTIVE)
+            self.assertEqual(dispatcher.dispatch(AUXFrame(0x20, 0x10, MC_SLEW_DONE)).reply.payload, b"\x00")
+            self.assertEqual(dispatcher.dispatch(AUXFrame(0x20, 0x11, MC_SLEW_DONE)).reply.payload, b"\x00")
+            gate_path.touch()
+            az.thread.join(1)
+            alt.thread.join(1)
+            self.assertEqual(coordinator.state(Axis.AZ), GotoState.COMPLETED)
+            self.assertEqual(coordinator.state(Axis.ALT), GotoState.COMPLETED)
+            self.assertEqual(dispatcher.dispatch(AUXFrame(0x20, 0x10, MC_SLEW_DONE)).reply.payload, b"\xff")
+            self.assertEqual(dispatcher.dispatch(AUXFrame(0x20, 0x11, MC_SLEW_DONE)).reply.payload, b"\xff")
+            deadline = threading.Event()
+            for _ in range(100):
+                if not gate.is_set() and not gate_path.exists():
+                    break
+                deadline.wait(0.01)
+            self.assertFalse(gate.is_set())
+            self.assertFalse(gate_path.exists())
+            slow_az = coordinator.start(Axis.AZ, 110, variant=0x17)
+            slow_alt = coordinator.start(Axis.ALT, 210, variant=0x17)
+            self.assertEqual(coordinator.state(Axis.AZ), GotoState.GOTO_ACTIVE)
+            self.assertEqual(coordinator.state(Axis.ALT), GotoState.GOTO_ACTIVE)
+            gate_path.touch()
+            slow_az.thread.join(1)
+            slow_alt.thread.join(1)
+            self.assertEqual(coordinator.state(Axis.AZ), GotoState.COMPLETED)
+            self.assertEqual(coordinator.state(Axis.ALT), GotoState.COMPLETED)
+            self.assertTrue(any("goto_gate_rearmed stage=SLOW" in line for line in logs))
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Callable
 
 from mount_api import Axis, GotoResult, MountController
 
@@ -43,12 +43,14 @@ class GoToCoordinator:
     """Owns at most one asynchronous GoTo job per axis."""
 
     def __init__(self, controller: MountController, *, enabled: bool = False,
-                 clock: Any = time.monotonic) -> None:
+                 clock: Any = time.monotonic,
+                 state_observer: Callable[[GotoJob], None] | None = None) -> None:
         self.controller = controller
         self.enabled = enabled
         self.clock = clock
         self._lock = threading.RLock()
         self._jobs: dict[Axis, GotoJob] = {}
+        self.state_observer = state_observer
 
     def job(self, axis: Axis) -> GotoJob | None:
         with self._lock:
@@ -75,7 +77,8 @@ class GoToCoordinator:
             job.thread = thread
             self._jobs[axis] = job
             thread.start()
-            return job
+        self._notify(job)
+        return job
 
     def cancel(self, axis: Axis, *, timeout: float = 2.0) -> bool:
         with self._lock:
@@ -85,6 +88,7 @@ class GoToCoordinator:
             job.state = GotoState.STOPPING
             job.cancellation.set()
             thread = job.thread
+        self._notify(job)
         if thread is not None:
             thread.join(timeout)
         return not self.is_active(axis)
@@ -103,8 +107,14 @@ class GoToCoordinator:
                 else:
                     job.state = GotoState.FAILED
                 job.error = f"{type(error).__name__}: {error}"
+            self._notify(job)
             return
         with self._lock:
             job.finished_at = self.clock()
             job.result = result
             job.state = GotoState.CANCELLED if job.cancellation.is_set() else GotoState.COMPLETED
+        self._notify(job)
+
+    def _notify(self, job: GotoJob) -> None:
+        if self.state_observer is not None:
+            self.state_observer(job)

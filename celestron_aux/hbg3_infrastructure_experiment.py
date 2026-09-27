@@ -11,6 +11,7 @@ import json
 import logging
 import socket
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,6 +21,8 @@ from celestron_aux.messages import MC_GET_APPROACH, MC_GET_AUTOGUIDE_RATE, MC_GE
 from celestron_aux.tcp_server import AUXTCPServer
 from celestron_aux.virtual_mc import VirtualCelestronMotorControllers
 from celestron_aux.goto_coordinator import GoToCoordinator
+from celestron_aux.goto_coordinator import GotoJob, GotoState
+from mount_api import Axis
 from fake_mount_backend import FakeMountBackend
 from mount_api import MountController
 
@@ -30,6 +33,60 @@ HBG3_V38_VERSION = "HomeBrew-AMW007-9.0.0.0, 2021-10-18T12:00:00Z, ESP32-3.8"
 def hbg3_v38_advertisement(mac: str) -> bytes:
     """HBG3 v3.8 JSON template; source/destination UDP details remain CLI-selected."""
     return f'{{"mac":"{mac}",\n"version":"{HBG3_V38_VERSION}"\n}}'.encode("ascii")
+
+
+def resolved_gate_path(path: Path) -> Path:
+    """Resolve one stable absolute path shared by metadata, watcher and operator."""
+    return path.expanduser().resolve(strict=False)
+
+
+def watch_gate_file(path: Path, gate: threading.Event, log, *, poll_seconds: float = 0.1) -> None:
+    """Release a fake GoTo gate when a file appears after the watcher starts."""
+    while not gate.is_set():
+        if path.exists():
+            gate.set()
+            log(f"goto_gate_released path={path}")
+            return
+        time.sleep(poll_seconds)
+
+
+def configure_two_stage_gate(coordinator: GoToCoordinator, path: Path,
+                             gate: threading.Event, log, *, poll_seconds: float = 0.1):
+    """Release FAST once, then re-arm the same file for the SLOW stage."""
+    lock = threading.Lock()
+    fast_rearmed = False
+
+    def start_watcher() -> None:
+        threading.Thread(
+            target=watch_gate_file,
+            args=(path, gate, log),
+            kwargs={"poll_seconds": poll_seconds},
+            name="fake-goto-gate", daemon=True,
+        ).start()
+
+    def observe(job: GotoJob) -> None:
+        nonlocal fast_rearmed
+        log(f"goto_job axis={job.axis.value.upper()} state={job.state.value} variant={job.variant:02X}")
+        if job.variant != 0x02 or job.state is not GotoState.COMPLETED:
+            return
+        with lock:
+            if fast_rearmed:
+                return
+            az = coordinator.job(Axis.AZ)
+            alt = coordinator.job(Axis.ALT)
+            if not (az and alt and az.variant == 0x02 and alt.variant == 0x02):
+                return
+            if az.state is not GotoState.COMPLETED or alt.state is not GotoState.COMPLETED:
+                return
+            fast_rearmed = True
+            gate.clear()
+            if path.exists():
+                path.unlink()
+            log(f"goto_gate_rearmed stage=SLOW path={path}")
+            start_watcher()
+
+    start_watcher()
+    return observe
 
 
 class HBG3InfrastructureExperiment:
@@ -84,6 +141,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=2000)
     parser.add_argument("--capture-root", type=Path, default=Path("captures"))
     parser.add_argument("--mc-version", default="03.08", help="Synthetic test-only MC_GET_VER major.minor bytes.")
+    parser.add_argument("--goto-gate-file", type=Path,
+                        help="Fake-only: hold GoTo active until this file exists.")
     args = parser.parse_args(argv)
     try:
         major, minor = (int(value, 10) for value in args.mc_version.split(".", 1))
@@ -106,6 +165,7 @@ def main(argv: list[str] | None = None) -> int:
             (0x20, 0x10, 0x01, 0), (0x20, 0x11, 0x01, 0),
             (0x20, 0x10, 0x02, 3), (0x20, 0x11, 0x02, 3),
             (0x20, 0x10, 0x17, 3), (0x20, 0x11, 0x17, 3),
+            (0x20, 0x10, 0x13, 0), (0x20, 0x11, 0x13, 0),
         }),
         hypothetical_zero_payload_ack_requests=frozenset({
             (0x20, 0x10, MC_MOVE_POS, b"\x00"),
@@ -125,13 +185,24 @@ def main(argv: list[str] | None = None) -> int:
             (0x20, 0x10, MC_MOVE_POS, 1), (0x20, 0x11, MC_MOVE_POS, 1),
             (0x20, 0x10, MC_MOVE_NEG, 1), (0x20, 0x11, MC_MOVE_NEG, 1),
         }),
+        experimental_goto_ack_shapes=frozenset({
+            (0x20, 0x10, 0x02, 3), (0x20, 0x11, 0x02, 3),
+            (0x20, 0x10, 0x17, 3), (0x20, 0x11, 0x17, 3),
+        }),
     )
     # Synthetic-only calibration: these values are not NXW436 physical calibration.
     coordinate_adapter = AUXCoordinateAdapter(
         az=AxisCoordinateConfig(neutral_modulus=256, neutral_zero=0, aux_zero=0, direction=1),
         alt=AxisCoordinateConfig(neutral_modulus=256, neutral_zero=0, aux_zero=0, direction=1),
     )
-    fake_backend = FakeMountBackend(az_position=0x10, alt_position=0x20)
+    gate_path = resolved_gate_path(args.goto_gate_file) if args.goto_gate_file else None
+    gate_initial_exists = bool(gate_path and gate_path.exists())
+    if gate_path is not None:
+        gate_path.parent.mkdir(parents=True, exist_ok=True)
+        if gate_initial_exists:
+            gate_path.unlink()
+    goto_gate = threading.Event() if gate_path else None
+    fake_backend = FakeMountBackend(az_position=0x10, alt_position=0x20, goto_gate=goto_gate)
     controller = MountController(fake_backend)
     coordinator = GoToCoordinator(controller, enabled=True)
     dispatcher = AUXDispatcher(
@@ -150,6 +221,8 @@ def main(argv: list[str] | None = None) -> int:
             "hbg3_reference_commit": "8c3a3c50e6797b77b3cdfedc258a1bed66e55f23",
             "hbg3_advertisement_evidence": "DIRECTLY_IMPLEMENTED port/template; destination/source port NOT_FOUND",
             "advertisement_destination": args.broadcast,
+            "goto_gate_file": None if gate_path is None else str(gate_path),
+            "goto_gate_initial_exists": gate_initial_exists,
             "experimental_hypothesis": "HYPOTHETICAL_ZERO_PAYLOAD_ACK for exact 20->10 and 20->11 MC_MOVE_POS payload 00; not protocol-proven",
             "experimental_zero_backlash": "EXPERIMENTAL_ZERO_BACKLASH for exact 20->10 and 20->11 MC_GET_POS_BACKLASH empty requests; AZ CLIENT_ACCEPTED_EXPERIMENTALLY, ALT pending; NOT_DEVICE_CAPTURE_PROVEN",
             "experimental_approach": "EXPERIMENTAL_APPROACH_VALUE_00 for exact 20->10 and 20->11 MC_GET_APPROACH empty requests; AZ CLIENT_ACCEPTED_EXPERIMENTALLY, ALT pending; NOT_DEVICE_CAPTURE_PROVEN; VALUE_SEMANTICS_UNKNOWN",
@@ -159,6 +232,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     experiment = HBG3InfrastructureExperiment(server, bind=args.bind, broadcast=args.broadcast, mac=args.mac)
     server.record_observer = experiment.observe_record
+    if gate_path is not None and goto_gate is not None:
+        gate_log = lambda message: server.capture.log(message) if server.capture is not None else None
+        if server.capture is not None:
+            server.capture.log(f"goto_gate_path={gate_path}")
+            server.capture.log(f"goto_gate_initial_exists={gate_initial_exists}")
+        coordinator.state_observer = configure_two_stage_gate(
+            coordinator, gate_path, goto_gate, gate_log,
+        )
+    else:
+        coordinator.state_observer = lambda job: (
+            server.capture.log(
+                f"goto_job axis={job.axis.value.upper()} state={job.state.value} variant={job.variant:02X}"
+            ) if server.capture is not None else None
+        )
     try:
         experiment.run()
     except KeyboardInterrupt:
