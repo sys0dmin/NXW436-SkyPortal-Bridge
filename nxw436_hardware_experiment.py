@@ -8,13 +8,15 @@ Fake backend launcher.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 from pathlib import Path
 from typing import Callable
 
-from celestron_aux.coordinates import AUXCoordinateAdapter, AxisCoordinateConfig
+from celestron_aux.coordinates import AUXCoordinateAdapter, AxisCoordinateConfig, degrees_to_aux
 from celestron_aux.dispatcher import AUXCapabilities, AUXDispatcher, SyntheticAUXProfile, VirtualMountIdentity
 from celestron_aux.hbg3_infrastructure_experiment import HBG3InfrastructureExperiment
+from celestron_aux.goto_coordinator import GoToCoordinator
 from celestron_aux.messages import (
     MC_GET_APPROACH, MC_GET_AUTOGUIDE_RATE, MC_GET_MAX_RATE, MC_GET_MAX_SLEW_RATE,
     MC_GET_MODEL, MC_GET_POS_BACKLASH, MC_GET_POSITION, MC_GET_VER, MC_MOVE_NEG,
@@ -22,7 +24,7 @@ from celestron_aux.messages import (
 )
 from celestron_aux.tcp_server import AUXTCPServer
 from celestron_aux.virtual_mc import VirtualCelestronMotorControllers
-from mount_api import Axis, MountController, SpeedTier
+from mount_api import Axis, MountController, SpeedTier, signed_modular_delta
 from mount_model import POSITION_MODULUS
 from nxw436_driver import MOVE_PREFIXES, POSITION_COMMANDS
 from nxw436_mount_backend import NXW436MountBackend, NXW436Transport
@@ -41,7 +43,7 @@ def hardware_speed_policy(rate: int) -> SpeedTier | None:
     }.get(rate)
 
 
-def build_hardware_profile() -> SyntheticAUXProfile:
+def build_hardware_profile(*, enable_goto: bool = False) -> SyntheticAUXProfile:
     """Known startup tuples plus hardware-gated manual motion only."""
     allowed = frozenset({
         (0x20, 0x10, MC_GET_VER, 0), (0x20, 0x11, MC_GET_VER, 0),
@@ -55,8 +57,13 @@ def build_hardware_profile() -> SyntheticAUXProfile:
         (0x20, 0x10, MC_MOVE_POS, 1), (0x20, 0x11, MC_MOVE_POS, 1),
         (0x20, 0x10, MC_MOVE_NEG, 1), (0x20, 0x11, MC_MOVE_NEG, 1),
     })
+    goto_allowed = {
+        (0x20, 0x10, 0x02, 3), (0x20, 0x11, 0x02, 3),
+        (0x20, 0x10, 0x17, 3), (0x20, 0x11, 0x17, 3),
+        (0x20, 0x10, 0x13, 0), (0x20, 0x11, 0x13, 0),
+    } if enable_goto else set()
     return SyntheticAUXProfile(
-        allowed,
+        frozenset(set(allowed) | goto_allowed),
         experimental_zero_backlash_requests=frozenset({
             (0x20, 0x10, MC_GET_POS_BACKLASH, b""), (0x20, 0x11, MC_GET_POS_BACKLASH, b""),
         }),
@@ -69,7 +76,29 @@ def build_hardware_profile() -> SyntheticAUXProfile:
             (0x20, 0x10, MC_MOVE_POS, 1), (0x20, 0x11, MC_MOVE_POS, 1),
             (0x20, 0x10, MC_MOVE_NEG, 1), (0x20, 0x11, MC_MOVE_NEG, 1),
         }),
+        experimental_goto_ack_shapes=frozenset({
+            (0x20, 0x10, 0x02, 3), (0x20, 0x11, 0x02, 3),
+            (0x20, 0x10, 0x17, 3), (0x20, 0x11, 0x17, 3),
+        }) if enable_goto else frozenset(),
     )
+
+
+def build_hardware_goto_coordinator(controller: MountController, *, max_delta_counts: int,
+                                    log: Callable[[str], None]) -> GoToCoordinator:
+    """Create explicit bounded hardware GoTo orchestration."""
+    def validate(axis: Axis, target: int) -> None:
+        current = controller.get_az_position() if axis is Axis.AZ else controller.get_alt_position()
+        delta = signed_modular_delta(current, target)
+        log(
+            f"GOTO_PREFLIGHT axis={axis.value.upper()} current={current:06X} "
+            f"target={target:06X} delta={delta} limit={max_delta_counts}"
+        )
+        if abs(delta) > max_delta_counts:
+            raise RuntimeError(
+                f"GoTo delta {delta} exceeds explicit hardware limit {max_delta_counts}"
+            )
+
+    return GoToCoordinator(controller, enabled=True, target_validator=validate)
 
 
 class LoggingTransport:
@@ -110,13 +139,15 @@ class LoggingTransport:
         self.transport.stop(axis, direction)
 
 
-def session_zero_adapter(backend: NXW436MountBackend, *, az_direction: int, alt_direction: int) -> AUXCoordinateAdapter:
+def session_zero_adapter(backend: NXW436MountBackend, *, az_direction: int, alt_direction: int,
+                         session_az_degrees: float = 0.0,
+                         session_alt_degrees: float = 0.0) -> AUXCoordinateAdapter:
     """Read session-local zeroes only; not physical alignment/calibration."""
     az_zero = backend.get_position(Axis.AZ)
     alt_zero = backend.get_position(Axis.ALT)
     return AUXCoordinateAdapter(
-        az=AxisCoordinateConfig(POSITION_MODULUS, az_zero, 0, az_direction),
-        alt=AxisCoordinateConfig(POSITION_MODULUS, alt_zero, 0, alt_direction),
+        az=AxisCoordinateConfig(POSITION_MODULUS, az_zero, degrees_to_aux(session_az_degrees), az_direction),
+        alt=AxisCoordinateConfig(POSITION_MODULUS, alt_zero, degrees_to_aux(session_alt_degrees), alt_direction),
     )
 
 
@@ -130,7 +161,26 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--capture-root", type=Path, default=Path("captures"))
     parser.add_argument("--az-direction", choices=("+", "-"), required=True)
     parser.add_argument("--alt-direction", choices=("+", "-"), required=True)
+    parser.add_argument("--session-az-deg", type=float,
+                        help="Experimental current physical AZ reference in degrees.")
+    parser.add_argument("--session-alt-deg", type=float,
+                        help="Experimental current physical ALT reference in degrees.")
+    parser.add_argument("--enable-goto", action="store_true",
+                        help="Explicitly enable experimental hardware AUX GoTo.")
+    parser.add_argument("--max-goto-delta-counts", type=int,
+                        help="Required with --enable-goto: maximum absolute native target delta.")
     args = parser.parse_args(argv)
+    if args.enable_goto:
+        if args.max_goto_delta_counts is None or not 1 <= args.max_goto_delta_counts <= POSITION_MODULUS // 4:
+            parser.error("--enable-goto requires --max-goto-delta-counts in 1..POSITION_MODULUS/4")
+    elif args.max_goto_delta_counts is not None:
+        parser.error("--max-goto-delta-counts requires --enable-goto")
+    if (args.session_az_deg is None) != (args.session_alt_deg is None):
+        parser.error("--session-az-deg and --session-alt-deg must be supplied together")
+    if args.session_az_deg is not None and not 0.0 <= args.session_az_deg < 360.0:
+        parser.error("--session-az-deg must be in 0..<360")
+    if args.session_alt_deg is not None and not -90.0 <= args.session_alt_deg <= 90.0:
+        parser.error("--session-alt-deg must be in -90..90")
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     raw_backend = NXW436MountBackend.from_port(args.serial)
@@ -149,6 +199,8 @@ def main(argv: list[str] | None = None) -> int:
         adapter = session_zero_adapter(
             backend, az_direction=1 if args.az_direction == "+" else -1,
             alt_direction=1 if args.alt_direction == "+" else -1,
+            session_az_degrees=0.0 if args.session_az_deg is None else args.session_az_deg,
+            session_alt_degrees=0.0 if args.session_alt_deg is None else args.session_alt_deg,
         )
         controller = MountController(backend)
         def position_telemetry(destination: int, raw: int, aux: int) -> None:
@@ -175,11 +227,17 @@ def main(argv: list[str] | None = None) -> int:
             motion_observer=motion_telemetry,
             log_both_axes_on_position_query=True,
         )
+        goto_coordinator = (
+            build_hardware_goto_coordinator(
+                controller, max_delta_counts=args.max_goto_delta_counts, log=telemetry,
+            ) if args.enable_goto else None
+        )
         dispatcher = AUXDispatcher(
             controller, AUXCapabilities(position_translation_enabled=True),
             coordinate_adapter=adapter, identity=VirtualMountIdentity((3, 8)),
-            synthetic_profile=build_hardware_profile(),
+            synthetic_profile=build_hardware_profile(enable_goto=args.enable_goto),
             virtual_mcs=virtual_mcs,
+            goto_coordinator=goto_coordinator,
         )
         server = AUXTCPServer(
             dispatcher, bind=args.bind, port=2000, capture_root=args.capture_root,
@@ -190,6 +248,10 @@ def main(argv: list[str] | None = None) -> int:
                 "serial_port": args.serial,
                 "manual_rate_policy": "EXPLICIT_MANUAL_POLICY: AUX 0x02 -> MANUAL_CONSERVATIVE -> 0000F5; 0x05 -> FINE -> 003978; 0x07 -> MEDIUM -> 0072F1; 0x09 -> MANUAL_HIGH -> 00E5E3",
                 "calibration": "session-local encoder zero; not pointing/alignment calibration",
+                "session_az_degrees": args.session_az_deg,
+                "session_alt_degrees": args.session_alt_deg,
+                "hardware_goto_enabled": args.enable_goto,
+                "max_goto_delta_counts": args.max_goto_delta_counts,
                 "az_session_zero": f"{adapter.configuration('az').neutral_zero:06X}",
                 "alt_session_zero": f"{adapter.configuration('alt').neutral_zero:06X}",
                 "az_session_direction": args.az_direction,
@@ -197,6 +259,16 @@ def main(argv: list[str] | None = None) -> int:
             },
         )
         server_holder.append(server)
+        if goto_coordinator is not None:
+            def goto_telemetry(job) -> None:
+                details = job.result.details if job.result is not None else job.failure_details
+                telemetry(
+                    f"goto_job axis={job.axis.value.upper()} state={job.state.value} "
+                    f"variant={job.variant:02X} target={job.target:06X} "
+                    f"motion_stopped={job.motion_stopped} error={job.error} "
+                    f"details={json.dumps(details, separators=(',', ':'), default=str)}"
+                )
+            goto_coordinator.state_observer = goto_telemetry
         experiment = HBG3InfrastructureExperiment(server, bind=args.bind, broadcast=args.broadcast, mac=args.mac)
         server.record_observer = experiment.observe_record
         experiment.run()

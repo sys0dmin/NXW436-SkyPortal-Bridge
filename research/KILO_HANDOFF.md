@@ -150,9 +150,29 @@ start GoTo until a Fake/client capture establishes the response contract.
 
 An isolated `GoToCoordinator` and cooperative cancellation hook are now
 implemented and validated only with an explicit FakeMountBackend profile. It
-keeps TCP dispatch responsive and supports independent AZ/ALT job state, but
-real NXW436 GoTo and AUX `MC_SLEW_DONE` replies remain disabled pending protocol
-evidence and further review.
+keeps TCP dispatch responsive and supports independent AZ/ALT job state. Real
+NXW436 execution remains disabled by default and not hardware-validated.
+
+An explicit hardware integration path is now present but disabled by default.
+It requires `--enable-goto` plus `--max-goto-delta-counts`, rejects targets
+outside the wrap-aware native bound before starting a job, and uses the same
+coordinator/adapter/UART transaction serialization validated with mocks. No real
+hardware GoTo has been executed; treat this as `HARDWARE_NOT_VALIDATED`.
+
+The first controlled hardware GoTo reached both FAST and SLOW stages. FAST
+completed on both axes. During SLOW, ALT physically stopped but its internal job
+became `FAILED`; absence of an ALT `SLEW_DONE` terminal response caused repeated
+polling and client EOF. A typed safely-stopped failure projection now preserves
+internal FAILED telemetry while returning protocol `FF` only when the backend
+proves the controller's STOP completed. Unsafe/generic failures remain unmapped.
+
+Precision telemetry then identified an absolute-target integration bug: backend
+computed a relative delta before the controller's pre-STOP/read, while the
+controller applied that old delta to a new post-STOP start position. This shifted
+the physical target by any position change between the two reads. The controller
+now optionally receives the absolute native target and recomputes its delta from
+the post-STOP initial sample. Frozen stage thresholds, payloads, stop margins and
+recovery are unchanged. The fix is unit-tested but needs one new hardware GoTo.
 
 The first real SkyPortal -> Fake GoTo capture is now available at
 `captures/20260926T231936Z-SkyPortal-HBG3-Infrastructure-AUX`. It confirms one
@@ -184,6 +204,13 @@ FAST AZ/ALT -> empty ACKs -> active `SLEW_DONE=00` -> first gate -> `FF` ->
 SLOW AZ/ALT -> empty ACKs -> active `00` -> second gate -> `FF`. SkyPortal kept
 position polling throughout and sent no further GoTo after SLOW completion in
 the observed window. Hardware GoTo remains disabled.
+
+Cancellation capture `20260927T142919Z` confirms SkyPortal sends `0x24/00` to
+AZ and ALT to cancel an active two-axis GoTo; coordinator jobs transition
+through STOPPING to CANCELLED. No subsequent nonzero manual MOVE was captured.
+That run also exposed a fake-only modulus mismatch (`256` adapter versus
+`0x102A00` backend) that caused rapid crosshair wraps; the fake experiment now
+uses canonical `POSITION_MODULUS`. Hardware mapping was unaffected.
 
 Capture `20260927T000015Z` confirms real SkyPortal acceptance of both axis GoTo
 ACKs and per-axis active `SLEW_DONE=00`. It polls position and status for both

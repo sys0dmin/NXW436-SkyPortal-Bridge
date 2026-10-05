@@ -12,6 +12,11 @@ from dataclasses import dataclass
 AUX_FULL_TURN = 1 << 24
 
 
+def degrees_to_aux(degrees: float) -> int:
+    """Encode an explicit angular reference into the AUX 24-bit full turn."""
+    return round((degrees % 360.0) * AUX_FULL_TURN / 360.0) % AUX_FULL_TURN
+
+
 class CoordinateUnavailable(RuntimeError):
     """The physical coordinate calibration has not been established."""
 

@@ -10,7 +10,7 @@ from celestron_aux.goto_coordinator import GoToCoordinator, GotoState
 from celestron_aux.messages import AUXFrame, MC_GET_POSITION, MC_GOTO_FAST, MC_MOVE_POS, MC_SLEW_DONE
 from celestron_aux.virtual_mc import VirtualCelestronMotorControllers
 from fake_mount_backend import FakeMountBackend
-from mount_api import Axis, MountController
+from mount_api import Axis, GotoExecutionError, MountController
 
 
 class GotoCoordinatorTests(unittest.TestCase):
@@ -70,6 +70,27 @@ class GotoCoordinatorTests(unittest.TestCase):
         job.thread.join(1)
         self.assertEqual(job.state, GotoState.FAILED)
         self.assertIn("fake failure", job.error)
+        self.assertIsNone(
+            dispatcher.dispatch(AUXFrame(0x20, 0x10, MC_SLEW_DONE)).reply
+        )
+
+    def test_failed_but_safely_stopped_job_projects_done_without_losing_failure(self) -> None:
+        gate, backend, coordinator, dispatcher = self.make_system()
+        backend.goto = lambda *args, **kwargs: (_ for _ in ()).throw(  # type: ignore[method-assign]
+            GotoExecutionError("settle validation failed", motion_stopped=True)
+        )
+        self.assertEqual(
+            dispatcher.dispatch(AUXFrame(0x20, 0x10, MC_GOTO_FAST, (128).to_bytes(3, "big"))).status,
+            "goto_started:GOTO_ACTIVE",
+        )
+        job = coordinator.job(Axis.AZ)
+        job.thread.join(1)
+        self.assertEqual(job.state, GotoState.FAILED)
+        self.assertTrue(job.motion_stopped)
+        done = dispatcher.dispatch(AUXFrame(0x20, 0x10, MC_SLEW_DONE))
+        self.assertEqual(done.status, "slew_done_terminal_failed")
+        self.assertEqual(done.reply.payload, b"\xff")
+        self.assertIn("settle validation failed", job.error)
 
     def test_slew_done_maps_active_and_completed_per_axis(self) -> None:
         gate, backend, coordinator, dispatcher = self.make_system()

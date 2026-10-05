@@ -47,6 +47,16 @@ class MountStateError(MountError):
     """The requested action is unsafe or lacks required command state."""
 
 
+class GotoExecutionError(MountError):
+    """GoTo failed while preserving whether physical motion safely stopped."""
+
+    def __init__(self, message: str, *, motion_stopped: bool,
+                 details: dict | None = None) -> None:
+        super().__init__(message)
+        self.motion_stopped = motion_stopped
+        self.details = details or {}
+
+
 def normalize_position(raw: int) -> int:
     """Normalize an encoder coordinate into the confirmed NXW436 modulus."""
     return raw % POSITION_MODULUS

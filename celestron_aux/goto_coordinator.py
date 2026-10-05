@@ -35,6 +35,8 @@ class GotoJob:
     finished_at: float | None = None
     result: GotoResult | None = None
     error: str | None = None
+    motion_stopped: bool = False
+    failure_details: dict = field(default_factory=dict)
     cancellation: threading.Event = field(default_factory=threading.Event)
     thread: threading.Thread | None = None
 
@@ -44,13 +46,15 @@ class GoToCoordinator:
 
     def __init__(self, controller: MountController, *, enabled: bool = False,
                  clock: Any = time.monotonic,
-                 state_observer: Callable[[GotoJob], None] | None = None) -> None:
+                 state_observer: Callable[[GotoJob], None] | None = None,
+                 target_validator: Callable[[Axis, int], None] | None = None) -> None:
         self.controller = controller
         self.enabled = enabled
         self.clock = clock
         self._lock = threading.RLock()
         self._jobs: dict[Axis, GotoJob] = {}
         self.state_observer = state_observer
+        self.target_validator = target_validator
 
     def job(self, axis: Axis) -> GotoJob | None:
         with self._lock:
@@ -67,6 +71,8 @@ class GoToCoordinator:
     def start(self, axis: Axis, target: int, *, variant: int) -> GotoJob:
         if not self.enabled:
             raise RuntimeError("asynchronous GoTo is disabled for this profile")
+        if self.target_validator is not None:
+            self.target_validator(axis, target)
         with self._lock:
             if self.is_active(axis):
                 raise RuntimeError(f"GoTo already active for {axis.value}")
@@ -107,6 +113,8 @@ class GoToCoordinator:
                 else:
                     job.state = GotoState.FAILED
                 job.error = f"{type(error).__name__}: {error}"
+                job.motion_stopped = bool(getattr(error, "motion_stopped", False))
+                job.failure_details = dict(getattr(error, "details", {}))
             self._notify(job)
             return
         with self._lock:

@@ -24,6 +24,7 @@ from mount_model import POSITION_MODULUS
 
 
 class FakeMountBackend:
+    POSITION_MODULUS = POSITION_MODULUS
     SIMULATED_COUNTS_PER_SECOND = {
         SpeedTier.SLOW: 10.0,
         SpeedTier.FINE: 50.0,

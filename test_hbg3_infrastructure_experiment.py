@@ -9,7 +9,7 @@ from celestron_aux.dispatcher import AUXDispatcher, SyntheticAUXProfile
 from celestron_aux.goto_coordinator import GoToCoordinator, GotoState
 from celestron_aux.hbg3_infrastructure_experiment import (
     HBG3InfrastructureExperiment, hbg3_v38_advertisement, resolved_gate_path,
-    configure_two_stage_gate,
+    build_fake_coordinate_adapter, configure_two_stage_gate,
 )
 from celestron_aux.messages import AUXFrame, MC_GET_VER, MC_SLEW_DONE
 from fake_mount_backend import FakeMountBackend
@@ -36,6 +36,12 @@ class HBG3InfrastructureExperimentTests(unittest.TestCase):
             b'{"mac":"01:02:03:04:05:06",\n"version":"'
             b'HomeBrew-AMW007-9.0.0.0, 2021-10-18T12:00:00Z, ESP32-3.8"\n}'
         ))
+
+    def test_fake_adapter_uses_backend_native_modulus_without_rapid_wrap(self) -> None:
+        adapter = build_fake_coordinate_adapter()
+        self.assertEqual(adapter.configuration("az").neutral_modulus, FakeMountBackend.POSITION_MODULUS)
+        self.assertEqual(adapter.to_aux("az", 0), 0)
+        self.assertLess(adapter.to_aux("az", 1), 32)
 
     def test_advertises_only_without_active_tcp_client(self) -> None:
         server = FakeServer()

@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 import unittest
+import threading
 
 from celestron_aux.dispatcher import AUXCapabilities, AUXDispatcher, VirtualMountIdentity
-from celestron_aux.messages import AUXFrame, MC_GET_MODEL, MC_GET_POSITION, MC_GET_VER, MC_MOVE_NEG, MC_MOVE_POS
+from celestron_aux.coordinates import degrees_to_aux
+from celestron_aux.goto_coordinator import GotoState
+from celestron_aux.messages import (
+    AUXFrame, MC_GET_MODEL, MC_GET_POSITION, MC_GET_VER, MC_GOTO_FAST,
+    MC_MOVE_NEG, MC_MOVE_POS, MC_SLEW_DONE,
+)
 from celestron_aux.virtual_mc import VirtualCelestronMotorControllers
-from mount_api import MountController
+from mount_api import Axis, MountController
 from mount_model import POSITION_MODULUS
-from nxw436_hardware_experiment import build_hardware_profile, hardware_speed_policy, session_zero_adapter
+from nxw436_hardware_experiment import (
+    build_hardware_goto_coordinator, build_hardware_profile, hardware_speed_policy,
+    session_zero_adapter,
+)
 from nxw436_mount_backend import NXW436MountBackend
 
 
@@ -157,6 +166,18 @@ class NXW436HardwareExperimentTests(unittest.TestCase):
         expected = ((1 << 24) + POSITION_MODULUS // 2) // POSITION_MODULUS
         self.assertEqual(result.reply.payload, expected.to_bytes(3, "big"))
 
+    def test_explicit_session_sky_reference_seeds_current_aux_position(self) -> None:
+        transport = RecordingHardwareTransport(az=1234, alt=5678)
+        backend = NXW436MountBackend(transport)
+        adapter = session_zero_adapter(
+            backend, az_direction=1, alt_direction=1,
+            session_az_degrees=261.25, session_alt_degrees=28.5,
+        )
+        self.assertEqual(adapter.to_aux("az", 1234), degrees_to_aux(261.25))
+        self.assertEqual(adapter.to_aux("alt", 5678), degrees_to_aux(28.5))
+        self.assertEqual(adapter.from_aux("az", degrees_to_aux(261.25)), 1234)
+        self.assertEqual(adapter.from_aux("alt", degrees_to_aux(28.5)), 5678)
+
     def test_raw_position_changes_and_telemetry_are_axis_independent(self) -> None:
         transport = RecordingHardwareTransport(az=POSITION_MODULUS - 2, alt=200)
         backend = NXW436MountBackend(transport)
@@ -180,9 +201,90 @@ class NXW436HardwareExperimentTests(unittest.TestCase):
     def test_startup_guide_rate_is_inert(self) -> None:
         dispatcher, transport = self.make_dispatcher()
         result = dispatcher.dispatch(AUXFrame(0x20, 0x10, 0x06, b"\x00\x00\x00"))
-        self.assertEqual(result.status, "recognized_unsupported")
+        self.assertEqual(result.status, "recognized_guiderate_profile_unconfigured")
         self.assertIsNone(result.reply)
         self.assertEqual(transport.commands, [])
+
+    def test_hardware_goto_is_disabled_by_default(self) -> None:
+        dispatcher, transport = self.make_dispatcher()
+        result = dispatcher.dispatch(AUXFrame(0x20, 0x10, MC_GOTO_FAST, b"\x00\x00\x10"))
+        self.assertEqual(result.status, "recognized_goto_disabled")
+        self.assertIsNone(result.reply)
+        self.assertEqual(transport.commands, [])
+
+    def test_explicit_hardware_goto_accepts_bounded_target_and_rejects_large_delta(self) -> None:
+        transport = RecordingHardwareTransport(az=100, alt=200)
+        backend = NXW436MountBackend(transport)
+        adapter = session_zero_adapter(backend, az_direction=1, alt_direction=1)
+        controller = MountController(backend)
+        started = threading.Event()
+        finish = threading.Event()
+        targets: list[int] = []
+
+        def fake_goto(target: int, *, cancellation_event=None):
+            targets.append(target)
+            started.set()
+            finish.wait(1)
+            return object()
+
+        controller.goto_az = fake_goto  # type: ignore[method-assign]
+        coordinator = build_hardware_goto_coordinator(
+            controller, max_delta_counts=20, log=lambda _message: None,
+        )
+        dispatcher = AUXDispatcher(
+            controller, AUXCapabilities(position_translation_enabled=True), adapter,
+            synthetic_profile=build_hardware_profile(enable_goto=True),
+            virtual_mcs=VirtualCelestronMotorControllers(manual_rate_to_speed=hardware_speed_policy),
+            goto_coordinator=coordinator,
+        )
+        target_native = 110
+        target_aux = adapter.to_aux("az", target_native).to_bytes(3, "big")
+        accepted = dispatcher.dispatch(AUXFrame(0x20, 0x10, MC_GOTO_FAST, target_aux))
+        self.assertEqual(accepted.status, "goto_started:GOTO_ACTIVE")
+        self.assertEqual(accepted.reply.payload, b"")
+        self.assertTrue(started.wait(1))
+        self.assertEqual(targets, [target_native])
+        self.assertEqual(coordinator.state(Axis.AZ), GotoState.GOTO_ACTIVE)
+        self.assertEqual(
+            dispatcher.dispatch(AUXFrame(0x20, 0x10, MC_SLEW_DONE)).reply.payload,
+            b"\x00",
+        )
+        finish.set()
+        coordinator.job(Axis.AZ).thread.join(1)
+        self.assertEqual(coordinator.state(Axis.AZ), GotoState.COMPLETED)
+        self.assertEqual(
+            dispatcher.dispatch(AUXFrame(0x20, 0x10, MC_SLEW_DONE)).reply.payload,
+            b"\xff",
+        )
+
+        targets.clear()
+        large_aux = adapter.to_aux("az", 200).to_bytes(3, "big")
+        rejected = dispatcher.dispatch(AUXFrame(0x20, 0x10, MC_GOTO_FAST, large_aux))
+        self.assertTrue(rejected.status.startswith("goto_rejected"))
+        self.assertIsNone(rejected.reply)
+        self.assertEqual(targets, [])
+
+    def test_hardware_goto_rejects_axis_owned_by_manual_motion(self) -> None:
+        transport = RecordingHardwareTransport(az=100, alt=200)
+        backend = NXW436MountBackend(transport)
+        adapter = session_zero_adapter(backend, az_direction=1, alt_direction=1)
+        controller = MountController(backend)
+        coordinator = build_hardware_goto_coordinator(
+            controller, max_delta_counts=20, log=lambda _message: None,
+        )
+        virtual_mcs = VirtualCelestronMotorControllers(manual_rate_to_speed=hardware_speed_policy)
+        dispatcher = AUXDispatcher(
+            controller, AUXCapabilities(position_translation_enabled=True), adapter,
+            synthetic_profile=build_hardware_profile(enable_goto=True),
+            virtual_mcs=virtual_mcs, goto_coordinator=coordinator,
+        )
+        self.assertIsNotNone(
+            dispatcher.dispatch(AUXFrame(0x20, 0x10, MC_MOVE_POS, b"\x02")).reply
+        )
+        target_aux = adapter.to_aux("az", 110).to_bytes(3, "big")
+        rejected = dispatcher.dispatch(AUXFrame(0x20, 0x10, MC_GOTO_FAST, target_aux))
+        self.assertEqual(rejected.status, "goto_rejected_manual_active")
+        self.assertIsNone(rejected.reply)
 
 
 if __name__ == "__main__":

@@ -398,10 +398,45 @@ the target only when the test releases it; default fake behavior remains
 unchanged. Cooperative cancellation uses the existing controller/backend
 boundary and never kills a thread.
 
-The real NXW436 launcher does **not** inject a coordinator and therefore does
-not enable hardware GoTo. `MC_GOTO_FAST`, `MC_GOTO_SLOW` and wire
-`MC_SLEW_DONE` replies remain disabled there. This is
-`IMPLEMENTED_AND_FAKE_VALIDATED`, not hardware validation.
+The initial fake milestone was `IMPLEMENTED_AND_FAKE_VALIDATED`. Hardware GoTo
+remained disabled until the explicit guarded integration described below was
+added; it is still not hardware-validated.
+
+## Explicit hardware integration gate
+
+The NXW436 launcher now contains an opt-in integration path, disabled by
+default. Hardware GoTo requires both:
+
+```text
+--enable-goto
+--max-goto-delta-counts <explicit positive limit>
+```
+
+The accepted limit is bounded to at most one quarter of `POSITION_MODULUS`.
+Before a background job is created, the coordinator performs a fresh encoder
+read, computes the wrap-aware signed native delta and rejects any target beyond
+the explicit limit. Rejection produces no GoTo ACK and no motion job.
+
+When enabled, only the already captured `0x02`, `0x17` and per-axis `0x13`
+tuples are added to the hardware profile. Coordinate conversion remains solely
+in `AUXCoordinateAdapter.from_aux()`. Manual ownership on the same axis rejects
+GoTo; manual movement during an active GoTo follows cooperative cancellation
+and bounded ownership release. Shared UART transactions remain serialized by
+the driver transaction lock.
+
+This is implemented and mock-validated but `HARDWARE_NOT_VALIDATED`: no real
+NXW436 GoTo has been run. Session-zero remains relative display calibration,
+so the first physical experiment must use a deliberately small explicit delta
+limit and a target close to the current crosshair.
+
+The first hardware runs exposed a target adaptation defect rather than UART
+contention: sample intervals remained near `0.176 s`, but the backend computed
+relative delta from a preflight position and `RelativePositionController`
+applied it after its own pre-STOP/read from a different start. SLOW internal
+targets were therefore shifted; positions that were already within the intended
+absolute target margin could continue until timeout. The controller now accepts
+an optional absolute native target and recomputes delta from its post-STOP start.
+Relative callers and all frozen stage/margin/recovery semantics remain unchanged.
 
 ## GoTo response evidence and fake ACK experiment
 
@@ -468,9 +503,25 @@ ALT equivalents are:
 3B 04 11 20 13 FF B9
 ```
 
-`IDLE`, `STOPPING`, `FAILED` and `CANCELLED` remain explicitly unmapped and do
-not become successful completion. Hardware profile remains disabled. `0x17`,
-ALT GoTo and post-release completion behavior require further capture.
+`IDLE`, `STOPPING` and terminal states without a proved physical STOP remain
+explicitly unmapped. A safely-stopped failure projection is documented below.
+
+### Terminal failure projection discovered on hardware
+
+Capture `captures/20260927T084809Z-SkyPortal-NXW436-Hardware-AUX` showed a
+protocol dead-end after the ALT SLOW controller physically stopped but its job
+became `FAILED`. AZ returned `SLEW_DONE=FF`; ALT returned no frame, so SkyPortal
+repeated ALT `0x13` approximately every three seconds and eventually closed the
+TCP connection.
+
+Internal failure must remain `FAILED`, but `MC_SLEW_DONE` means whether the
+motor is still slewing, not whether exact target acquisition succeeded. The
+backend now raises a typed `GotoExecutionError(motion_stopped=True)` only when a
+`ControllerAbort` survives the controller's verified `finally` STOP path. The
+coordinator retains `FAILED`, error text and `motion_stopped`; the protocol may
+then project that safely stopped terminal state to `FF` with diagnostic status
+`slew_done_terminal_failed`. Generic failures, STOP failures and unknown safety
+states still produce no fabricated completion response.
 
 ### Full two-stage client capture
 
@@ -664,6 +715,36 @@ No synthetic `MC_SLEW_DONE` response is justified by this capture. The next
 fake experiment should release the gate only after collecting the active
 position/retry evidence, then observe whether the client sends a new request or
 closes/retries. A separate session is needed to test ALT/two-axis behavior.
+
+## Real cancellation frames
+
+Capture `captures/20260927T142919Z-SkyPortal-HBG3-Infrastructure-AUX`
+records SkyPortal cancelling active two-axis fake GoTo by sending direction-
+neutral zero-rate STOP to both axes:
+
+```text
+20 -> 10 24 00   # AZ
+20 -> 11 24 00   # ALT
+```
+
+For each axis the coordinator transitioned `GOTO_ACTIVE -> STOPPING ->
+CANCELLED`. The same pair appeared in the second attempted interaction. No
+nonzero manual MOVE followed in the captured window, so the client-side
+cancel-then-manual sequence remains unproven; only cancellation by `0x24/00`
+for both axes is `CLIENT_CAPTURE_CONFIRMED`.
+
+The apparently chaotic crosshair motion in that fake run was not protocol or
+cancellation behavior. `FakeMountBackend` uses canonical native modulus
+`0x102A00`, while the experiment adapter had incorrectly used modulus `256`;
+every 256 simulated counts therefore wrapped one full AUX revolution. The fake
+experiment now uses canonical `POSITION_MODULUS`. Hardware coordinate adapters
+were already correct and are unaffected.
+
+Manual timing evidence is documented separately in
+`SKYPORTAL_ALIGNMENT_TRACKING_CAPTURE.md`: a SkyPortal short tap can issue
+manual rate `0x09` then direction-neutral `0x00` after 69 ms (with an observed
+3 ms ALT example). Multi-second gaps between user actions occurred while the
+same connection continued position polling and are not transport latency.
 
 ## Alignment observation
 

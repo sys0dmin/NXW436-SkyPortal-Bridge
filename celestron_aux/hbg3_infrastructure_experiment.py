@@ -35,6 +35,14 @@ def hbg3_v38_advertisement(mac: str) -> bytes:
     return f'{{"mac":"{mac}",\n"version":"{HBG3_V38_VERSION}"\n}}'.encode("ascii")
 
 
+def build_fake_coordinate_adapter() -> AUXCoordinateAdapter:
+    """Use the same native modulus as FakeMountBackend; no 256-count wrap."""
+    return AUXCoordinateAdapter(
+        az=AxisCoordinateConfig(FakeMountBackend.POSITION_MODULUS, 0, 0, 1),
+        alt=AxisCoordinateConfig(FakeMountBackend.POSITION_MODULUS, 0, 0, 1),
+    )
+
+
 def resolved_gate_path(path: Path) -> Path:
     """Resolve one stable absolute path shared by metadata, watcher and operator."""
     return path.expanduser().resolve(strict=False)
@@ -153,6 +161,12 @@ def main(argv: list[str] | None = None) -> int:
     profile = SyntheticAUXProfile(
         frozenset({
             (0x20, 0x10, MC_GET_VER, 0), (0x20, 0x11, MC_GET_VER, 0),
+            (0x20, 0xB4, MC_GET_VER, 0), (0x20, 0xB9, MC_GET_VER, 0),
+            (0x20, 0x12, MC_GET_VER, 0),
+            (0x20, 0xB9, 0x49, 0), (0x20, 0xB9, 0x32, 4),
+            (0x20, 0xB4, 0x3F, 1), (0x20, 0x12, 0x2B, 0),
+            (0x20, 0xB5, 0x15, 10),
+            (0x20, 0x10, 0x06, 3),
             (0x20, 0x10, MC_GET_MODEL, 0),
             (0x20, 0x10, MC_MOVE_POS, 1), (0x20, 0x11, MC_MOVE_POS, 1),
             (0x20, 0x10, MC_MOVE_NEG, 1), (0x20, 0x11, MC_MOVE_NEG, 1),
@@ -189,12 +203,11 @@ def main(argv: list[str] | None = None) -> int:
             (0x20, 0x10, 0x02, 3), (0x20, 0x11, 0x02, 3),
             (0x20, 0x10, 0x17, 3), (0x20, 0x11, 0x17, 3),
         }),
+        hbg_optional_device_emulation=True,
+        hbg_evwifi_shim=True,
     )
     # Synthetic-only calibration: these values are not NXW436 physical calibration.
-    coordinate_adapter = AUXCoordinateAdapter(
-        az=AxisCoordinateConfig(neutral_modulus=256, neutral_zero=0, aux_zero=0, direction=1),
-        alt=AxisCoordinateConfig(neutral_modulus=256, neutral_zero=0, aux_zero=0, direction=1),
-    )
+    coordinate_adapter = build_fake_coordinate_adapter()
     gate_path = resolved_gate_path(args.goto_gate_file) if args.goto_gate_file else None
     gate_initial_exists = bool(gate_path and gate_path.exists())
     if gate_path is not None:

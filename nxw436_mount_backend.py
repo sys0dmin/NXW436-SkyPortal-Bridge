@@ -14,6 +14,7 @@ from mount_api import (
     Axis,
     AxisStatus,
     Direction,
+    GotoExecutionError,
     GotoResult,
     MountStateError,
     PositionFrameError,
@@ -22,7 +23,7 @@ from mount_api import (
     signed_modular_delta,
 )
 from nxw436_driver import NXW436, is_valid_raw_position
-from nxw436_position_controller import PROFILES, RelativePositionController
+from nxw436_position_controller import ControllerAbort, PROFILES, RelativePositionController
 
 
 class NXW436Transport(Protocol):
@@ -122,13 +123,24 @@ class NXW436MountBackend:
                 axis, start, target, 0, True, True, start, 0, "exact",
                 {"already_at_target": True},
             )
-        controller = RelativePositionController(self.transport, axis.value, delta)
+        controller = RelativePositionController(
+            self.transport, axis.value, delta,
+            absolute_target_raw=target,
+        )
         try:
-            details = controller.run(
-                max_seconds=self.goto_max_seconds,
-                settle_seconds=self.goto_settle_seconds,
-                cancellation_event=cancellation_event,
-            )
+            try:
+                details = controller.run(
+                    max_seconds=self.goto_max_seconds,
+                    settle_seconds=self.goto_settle_seconds,
+                    cancellation_event=cancellation_event,
+                )
+            except ControllerAbort as error:
+                # ControllerAbort survived the controller's finally STOP path,
+                # so the physical double STOP itself completed successfully.
+                raise GotoExecutionError(
+                    str(error), motion_stopped=True,
+                    details={"controller_telemetry": controller.telemetry_summary()},
+                ) from error
         finally:
             self._motion_commanded[axis] = False
         final_position = int(details["final_raw"])

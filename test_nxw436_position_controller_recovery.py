@@ -70,6 +70,21 @@ def normal_finish_positions_negative() -> list[int]:
 
 
 class ProductionAzMediumRecoveryTests(unittest.TestCase):
+    def test_absolute_target_is_recomputed_from_post_stop_start(self):
+        clock = FakeClock()
+        mount = FakeMount([100000, 100350, 100450, 100450, 100450])
+        with (
+            patch.object(controller_module.time, "perf_counter", clock.perf_counter),
+            patch.object(controller_module.time, "time", clock.time),
+            patch.object(controller_module.time, "sleep", clock.sleep),
+        ):
+            controller = RelativePositionController(
+                mount, "az", 1000, absolute_target_raw=100500,
+            )
+            result = controller.run(max_seconds=20.0, settle_seconds=0.3)
+        self.assertEqual(controller.target_delta, 500)
+        self.assertEqual(result["target_raw_modulo"], 100500)
+
     def test_az_stop200_configuration_preserves_alt_and_stage_thresholds(self):
         self.assertEqual(STOP_MARGINS["az"], 200)
         self.assertEqual(STOP_MARGINS["alt"], 350)

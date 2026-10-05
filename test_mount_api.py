@@ -4,10 +4,11 @@ import unittest
 from unittest.mock import patch
 
 from fake_mount_backend import FakeMountBackend
-from mount_api import Axis, Direction, MountController, MountStateError, PositionFrameError, SpeedTier, POSITION_MODULUS
+from mount_api import Axis, Direction, GotoExecutionError, MountController, MountStateError, PositionFrameError, SpeedTier, POSITION_MODULUS
 from mount_model import POSITION_MODULUS as CANONICAL_POSITION_MODULUS
 from nxw436_driver import COUNTS_PER_REV, RAW_MODULO
 from nxw436_mount_backend import NXW436MountBackend
+from nxw436_position_controller import ControllerAbort
 
 
 class RecordingTransport:
@@ -25,7 +26,7 @@ class RecordingTransport:
 
 
 class ControllerReturningUndershoot:
-    def __init__(self, transport: RecordingTransport, axis: str, delta: int) -> None:
+    def __init__(self, transport: RecordingTransport, axis: str, delta: int, **_: object) -> None:
         self.transport = transport
         self.axis = axis
         self.delta = delta
@@ -99,6 +100,14 @@ class MountApiTests(unittest.TestCase):
         transport.query_position_raw = lambda _axis: b"\x01\x02"  # type: ignore[method-assign]
         with self.assertRaises(PositionFrameError):
             NXW436MountBackend(transport).get_position(Axis.AZ)
+
+    def test_nxw436_goto_abort_reports_safe_stop_completed(self) -> None:
+        transport = RecordingTransport()
+        backend = NXW436MountBackend(transport)
+        with patch("nxw436_mount_backend.RelativePositionController.run", side_effect=ControllerAbort("settle failed")):
+            with self.assertRaises(GotoExecutionError) as caught:
+                backend.goto(Axis.AZ, 100)
+        self.assertTrue(caught.exception.motion_stopped)
 
     def test_nxw436_goto_completion_is_not_exact_target_acquisition(self) -> None:
         transport = RecordingTransport()

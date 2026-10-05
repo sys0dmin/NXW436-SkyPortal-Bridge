@@ -80,6 +80,61 @@ class AuxFrontendTests(unittest.TestCase):
         self.assertEqual(result.reply, AUXFrame(0x10, 0x20, MC_GET_VER, b"\x07\x09"))
         self.assertEqual(self.fake.commands, [])
 
+    def test_hbg_evwifi_observed_request_gets_empty_ack(self) -> None:
+        dispatcher = AUXDispatcher(MountController(self.fake), synthetic_profile=SyntheticAUXProfile(
+            frozenset({(0x20, 0xB5, 0x15, 10)}),
+            hbg_evwifi_shim=True,
+        ))
+        result = dispatcher.dispatch(AUXFrame(0x20, 0xB5, 0x15, bytes.fromhex("58EE1107DB181B308A04")))
+        self.assertEqual(result.status, "hbg_evwifi_ack")
+        self.assertEqual(serialize(result.reply), bytes.fromhex("3B03B5201513"))
+
+    def test_hbg_guiderate_observed_request_gets_empty_ack(self) -> None:
+        dispatcher = AUXDispatcher(MountController(self.fake), synthetic_profile=SyntheticAUXProfile(
+            frozenset({(0x20, 0x10, 0x06, 3)})
+        ))
+        result = dispatcher.dispatch(AUXFrame(0x20, 0x10, 0x06, b"\x00\x00\x00"))
+        self.assertEqual(result.status, "hbg_guiderate_ack")
+        self.assertEqual(serialize(result.reply), bytes.fromhex("3B03102006C7"))
+
+    def test_hbg_optional_device_versions_are_source_backed(self) -> None:
+        dispatcher = AUXDispatcher(MountController(self.fake), synthetic_profile=SyntheticAUXProfile(
+            frozenset({
+                (0x20, 0xB4, MC_GET_VER, 0),
+                (0x20, 0xB9, MC_GET_VER, 0),
+                (0x20, 0x12, MC_GET_VER, 0),
+            }),
+            hbg_optional_device_emulation=True,
+        ))
+        expected = {
+            0xB4: "3B07B420FE0102341FD1",
+            0xB9: "3B07B920FE230B000CE8",
+            0x12: "3B071220FE071024543A",
+        }
+        for destination, wire in expected.items():
+            result = dispatcher.dispatch(AUXFrame(0x20, destination, MC_GET_VER))
+            self.assertEqual(result.status, "hbg_optional_device_version")
+            self.assertEqual(serialize(result.reply), bytes.fromhex(wire))
+
+    def test_hbg_optional_device_followup_requests_are_source_backed(self) -> None:
+        dispatcher = AUXDispatcher(MountController(self.fake), synthetic_profile=SyntheticAUXProfile(
+            frozenset({
+                (0x20, 0xB9, 0x49, 0), (0x20, 0xB9, 0x32, 4),
+                (0x20, 0xB4, 0x3F, 1), (0x20, 0x12, 0x2B, 0),
+            }),
+            hbg_optional_device_emulation=True,
+        ))
+        cases = (
+            (AUXFrame(0x20, 0xB9, 0x49), "3B04B9204901D9"),
+            (AUXFrame(0x20, 0xB9, 0x32, bytes.fromhex("32529D82")), "3B03B92032F2"),
+            (AUXFrame(0x20, 0xB4, 0x3F, b"\x00"), "3B0BB4203F80020000E00100007F"),
+            (AUXFrame(0x20, 0x12, 0x2B), "3B0412202B009F"),
+        )
+        for request, wire in cases:
+            result = dispatcher.dispatch(request)
+            self.assertTrue(result.status.startswith("hbg_"))
+            self.assertEqual(serialize(result.reply), bytes.fromhex(wire))
+
     def test_hbg3_model_reply_matches_observed_skyportal_tuple(self) -> None:
         dispatcher = AUXDispatcher(
             MountController(self.fake), identity=VirtualMountIdentity((3, 8)),
@@ -95,18 +150,21 @@ class AuxFrontendTests(unittest.TestCase):
         ):
             self.assertIsNone(dispatcher.dispatch(altered).reply)
 
-    def test_unobserved_version_destinations_remain_no_reply(self) -> None:
+    def test_optional_emulator_versions_and_unknown_bd_no_reply(self) -> None:
         dispatcher = AUXDispatcher(
             MountController(self.fake), identity=VirtualMountIdentity((3, 8)),
             synthetic_profile=SyntheticAUXProfile(frozenset({
                 (0x20, 0x10, MC_GET_VER, 0), (0x20, 0x11, MC_GET_VER, 0),
                 (0x20, 0x10, MC_GET_MODEL, 0),
-            })),
+            }), hbg_optional_device_emulation=True),
         )
         self.assertEqual(dispatcher.dispatch(AUXFrame(0x20, 0x11, MC_GET_VER)).reply,
                          AUXFrame(0x11, 0x20, MC_GET_VER, b"\x03\x08"))
         self.assertIsNone(dispatcher.dispatch(AUXFrame(0x20, 0xBD, MC_GET_VER)).reply)
-        self.assertIsNone(dispatcher.dispatch(AUXFrame(0x20, 0xB9, MC_GET_VER)).reply)
+        self.assertEqual(
+            dispatcher.dispatch(AUXFrame(0x20, 0xB9, MC_GET_VER)).reply,
+            AUXFrame(0xB9, 0x20, MC_GET_VER, bytes.fromhex("230B000C")),
+        )
 
     def test_hypothetical_zero_payload_ack_is_exact_and_has_no_backend_calls(self) -> None:
         profile = SyntheticAUXProfile(

@@ -9,7 +9,7 @@ from mount_api import Axis, Direction, MountController, MountError
 from celestron_aux.coordinates import AUXCoordinateAdapter, CoordinateUnavailable
 from celestron_aux.messages import (
     AUXFrame, KNOWN_DIAGNOSTIC_COMMANDS, MC_GET_MODEL, MC_GET_POSITION, MC_GET_VER, MC_GOTO_FAST,
-    MC_GET_APPROACH, MC_GET_AUTOGUIDE_RATE, MC_GET_MAX_RATE, MC_GET_MAX_SLEW_RATE, MC_GET_POS_BACKLASH, MC_GOTO_SLOW, MC_MOVE_NEG, MC_MOVE_POS, MC_SET_AUTOGUIDE_RATE, MC_SET_POSITION, MC_SLEW_DONE,
+    MC_GET_APPROACH, MC_GET_AUTOGUIDE_RATE, MC_GET_MAX_RATE, MC_GET_MAX_SLEW_RATE, MC_GET_POS_BACKLASH, MC_GOTO_SLOW, MC_MOVE_NEG, MC_MOVE_POS, MC_SET_AUTOGUIDE_RATE, MC_SET_POSITION, MC_SET_POS_GUIDERATE, MC_SLEW_DONE,
 )
 from celestron_aux.virtual_mc import VirtualCelestronMotorControllers
 from celestron_aux.goto_coordinator import GoToCoordinator
@@ -47,6 +47,8 @@ class SyntheticAUXProfile:
     experimental_goto_ack_requests: frozenset[tuple[int, int, int, bytes]] = frozenset()
     experimental_goto_ack_shapes: frozenset[tuple[int, int, int, int]] = frozenset()
     simulated_manual_motion_requests: frozenset[tuple[int, int, int, int]] = frozenset()
+    hbg_optional_device_emulation: bool = False
+    hbg_evwifi_shim: bool = False
 
     def permits(self, frame: AUXFrame) -> bool:
         return (frame.source, frame.destination, frame.command, len(frame.payload)) in self.allowed_requests
@@ -94,9 +96,41 @@ class AUXDispatcher:
         self._goto_coordinator = goto_coordinator
 
     def dispatch(self, frame: AUXFrame) -> DispatchResult:
+        if (self._synthetic_profile is not None and self._synthetic_profile.hbg_evwifi_shim
+                and frame.destination == 0xB5 and frame.command == 0x15 and len(frame.payload) == 10):
+            # HBG3 evwifi_handle_request() sends a generic empty reply for this
+            # observed Evolution Wi-Fi device request.
+            return DispatchResult("hbg_evwifi_ack", self._reply(frame, b""))
+        if (self._synthetic_profile is not None and self._synthetic_profile.hbg_optional_device_emulation
+                and frame.destination == 0xB9 and frame.command == 0x49 and len(frame.payload) == 0):
+            # HBG v9.11 SSAG source returns 01; upstream semantics are unknown.
+            return DispatchResult("hbg_ssag_49", self._reply(frame, b"\x01"))
+        if (self._synthetic_profile is not None and self._synthetic_profile.hbg_optional_device_emulation
+                and frame.destination == 0xB9 and frame.command == 0x32 and len(frame.payload) == 4):
+            return DispatchResult("hbg_ssag_32_ack", self._reply(frame, b""))
+        if (self._synthetic_profile is not None and self._synthetic_profile.hbg_optional_device_emulation
+                and frame.destination == 0xB4 and frame.command == 0x3F and frame.payload == b"\x00"):
+            return DispatchResult(
+                "hbg_ssaa_profile",
+                self._reply(frame, bytes.fromhex("80020000E0010000")),
+            )
+        if (self._synthetic_profile is not None and self._synthetic_profile.hbg_optional_device_emulation
+                and frame.destination == 0x12 and frame.command == 0x2B and len(frame.payload) == 0):
+            return DispatchResult("hbg_focus_calibrated", self._reply(frame, b"\x00"))
         if frame.command not in KNOWN_DIAGNOSTIC_COMMANDS:
             return DispatchResult("unsupported_unknown_command")
         if frame.command == MC_GET_VER:
+            emulated_versions = {
+                0xB4: bytes.fromhex("0102341F"),
+                0xB9: bytes.fromhex("230B000C"),
+                0x12: bytes.fromhex("07102454"),
+            }
+            if (self._synthetic_profile is not None and self._synthetic_profile.hbg_optional_device_emulation
+                    and frame.destination in emulated_versions and len(frame.payload) == 0):
+                return DispatchResult(
+                    "hbg_optional_device_version",
+                    self._reply(frame, emulated_versions[frame.destination]),
+                )
             if self._synthetic_profile is None or not self._synthetic_profile.permits(frame):
                 return DispatchResult("recognized_synthetic_profile_unconfigured")
             if self._identity is None:
@@ -126,6 +160,12 @@ class AUXDispatcher:
             if aux is None:
                 return DispatchResult("recognized_position_unknown_destination")
             return DispatchResult("mount_query_reply", self._reply(frame, aux.to_bytes(3, "big")))
+        if frame.command == MC_SET_POS_GUIDERATE and len(frame.payload) == 3:
+            if self._synthetic_profile is None or not self._synthetic_profile.permits(frame):
+                return DispatchResult("recognized_guiderate_profile_unconfigured")
+            # HBG v9.11 emulate.mount ACKs this configuration request without
+            # enabling physical tracking in the fake profile.
+            return DispatchResult("hbg_guiderate_ack", self._reply(frame, b""))
         if frame.command == MC_SLEW_DONE:
             if self._goto_coordinator is None or self._synthetic_profile is None:
                 return DispatchResult("recognized_slew_done_disabled")
@@ -139,6 +179,12 @@ class AUXDispatcher:
                 return DispatchResult("slew_active", self._reply(frame, b"\x00"))
             if state.value == "COMPLETED":
                 return DispatchResult("slew_done", self._reply(frame, b"\xff"))
+            job = self._goto_coordinator.job(axis)
+            if state.value in {"FAILED", "CANCELLED"} and job is not None and job.motion_stopped:
+                return DispatchResult(
+                    f"slew_done_terminal_{state.value.lower()}",
+                    self._reply(frame, b"\xff"),
+                )
             return DispatchResult(f"slew_done_state_unmapped:{state.value}")
         if frame.command in {MC_GOTO_FAST, MC_GOTO_SLOW}:
             if self._goto_coordinator is None or self._coordinate_adapter is None:
@@ -150,6 +196,8 @@ class AUXDispatcher:
             axis = {0x10: "az", 0x11: "alt"}.get(frame.destination)
             if axis is None:
                 return DispatchResult("recognized_goto_unknown_destination")
+            if self._virtual_mcs is not None and self._virtual_mcs.motion_owned(frame.destination):
+                return DispatchResult("goto_rejected_manual_active")
             try:
                 target = self._coordinate_adapter.from_aux(axis, int.from_bytes(frame.payload, "big"))
                 self._goto_coordinator.start(

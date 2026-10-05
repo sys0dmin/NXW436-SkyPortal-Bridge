@@ -81,7 +81,8 @@ def choose_stage(axis: str, remaining_counts: int) -> Stage:
 
 class RelativePositionController:
     def __init__(self, mount: NXW436, axis: str, target_delta: int, *, sample_seconds: float = 0.15,
-                 stop_margin_counts: int | None = None):
+                 stop_margin_counts: int | None = None,
+                 absolute_target_raw: int | None = None):
         if axis not in PROFILES:
             raise ValueError(f"Unknown axis: {axis}")
         if target_delta == 0:
@@ -89,6 +90,7 @@ class RelativePositionController:
         if stop_margin_counts is not None and (axis != "az" or stop_margin_counts not in (200, 300)):
             raise ValueError("only AZ experimental stop margins 200 or 300 may be selected")
         self.mount, self.axis, self.target_delta = mount, axis, target_delta
+        self.absolute_target_raw = absolute_target_raw
         self.stop_margin_counts = STOP_MARGINS[axis] if stop_margin_counts is None else stop_margin_counts
         self.direction = "+" if target_delta > 0 else "-"
         self.sign = 1 if target_delta > 0 else -1
@@ -185,6 +187,26 @@ class RelativePositionController:
             "recovery_success": self.az_medium_recovery_success,
             "recovery_failure_reason": self.az_medium_recovery_failure_reason,
             "invalid_replies_total": self.invalid_total,
+        }
+
+    def telemetry_summary(self) -> dict:
+        """Compact timing/stage evidence for integrated GoTo diagnostics."""
+        times = [float(row["monotonic_s"]) for row in self.rows]
+        intervals = [later - earlier for earlier, later in zip(times, times[1:])]
+        return {
+            "sample_count": len(self.rows),
+            "sample_interval_mean_s": sum(intervals) / len(intervals) if intervals else 0.0,
+            "sample_interval_max_s": max(intervals) if intervals else 0.0,
+            "transitions": [
+                {
+                    "state": transition["state"],
+                    "payload_hex": transition["payload_hex"],
+                    "remaining_counts": transition["remaining_counts"],
+                    "elapsed_s": transition["elapsed_s"],
+                }
+                for transition in self.transitions
+            ],
+            "last_row": self.rows[-1] if self.rows else None,
         }
 
     def _activate_stage(self, stage: Stage, reason: str) -> None:
@@ -348,6 +370,12 @@ class RelativePositionController:
         if reply is None or reply[1] < 0:
             raise ControllerAbort("no valid initial position")
         frame, self.start_raw = reply
+        if self.absolute_target_raw is not None:
+            self.target_delta = signed_delta(self.start_raw, self.absolute_target_raw)
+            if self.target_delta == 0:
+                raise ControllerAbort("already at absolute target after pre-stop")
+            self.direction = "+" if self.target_delta > 0 else "-"
+            self.sign = 1 if self.target_delta > 0 else -1
         self.previous_raw, self.unwrapped = self.start_raw, self.start_raw
         self.previous_time = time.perf_counter()
         self.target_unwrapped = self.start_raw + self.target_delta
@@ -411,6 +439,7 @@ class RelativePositionController:
             "settled_coast_counts": settled_coast,
             "settled_coast_degrees": settled_coast * 360.0 / COUNTS_PER_REV,
             "settled_outcome": "overshoot" if signed_final < 0 else ("undershoot" if signed_final > 0 else "exact"),
+            "controller_telemetry": self.telemetry_summary(),
             "invalid_replies_total": self.invalid_total,
             **self.recovery_log_fields(),
             "total_elapsed_including_settle_s": time.perf_counter() - self.command_started,
